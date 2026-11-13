@@ -1,0 +1,18 @@
+{
+  "name": "cyberhub-erp",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev:api": "npm --prefix CyberHub-API run dev",
+    "dev:student": "npm --prefix CyberHub-Student run dev",
+    "dev:staff": "npm --prefix CyberHub-Staff run dev",
+    "build:api": "npm --prefix CyberHub-API run build",
+    "build:student": "npm --prefix CyberHub-Student run build",
+    "build:staff": "npm --prefix CyberHub-Staff run build",
+    "db:generate": "npm --prefix CyberHub-API run db:generate",
+    "db:push": "npm --prefix CyberHub-API run db:push",
+    "db:seed": "npm --prefix CyberHub-API run db:seed",
+    "lint:student": "npm --prefix CyberHub-Student run lint",
+    "lint:staff": "npm --prefix CyberHub-Staff run lint"
+  }
+}
