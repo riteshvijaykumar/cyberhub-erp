@@ -24,7 +24,9 @@
 .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; }
 .recordCard { min-height:170px; display:flex; flex-direction:column; padding:18px; background:#fff; border:1px solid #e8eef4; border-radius:13px; box-shadow:0 1px 4px rgba(13,31,60,.04); }
 .cardTop,.cardFooter { display:flex; justify-content:space-between; align-items:center; gap:8px; }
-.submitted,.draft { padding:4px 8px; border-radius:12px; font-size:.68rem; font-weight:700; }
+.submitted,.draft,.rejected { padding:4px 8px; border-radius:12px; font-size:.68rem; font-weight:700; }
+.rejected,.rejectionNotice { background:#fff1f2; color:#9f1239; }
+.rejectionNotice { margin:12px 0; padding:10px 12px; border-radius:8px; font-size:.78rem; line-height:1.5; overflow-wrap:anywhere; }
 .submitted { background:#e9f8f0; color:#16834d; }.draft { background:#fff5df; color:#b56a00; }
 .date { color:#94a3b8; font-size:.7rem; }
 .recordCard h3 { margin:18px 0 6px; color:#0d1f3c; font-size:.95rem; }

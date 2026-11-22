@@ -26,6 +26,18 @@ interface ActivityRecord {
   status: "Draft" | "Submitted" | "Approved" | "Rejected";
   createdAt: string;
   values: Record<string, string>;
+  rejectionReason?: string;
+}
+
+interface ApiActivityRecord {
+  id: string;
+  type: string;
+  title: string;
+  description?: string | null;
+  status: string;
+  metadata?: Record<string, string> | null;
+  createdAt: string;
+  approvals?: Array<{ action: string; comment?: string | null }>;
 }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
@@ -52,7 +64,7 @@ export default function ActivityModule({
     try {
       const response = await fetch(`${API_URL}/api/v1/achievements`, { credentials: "include" });
       if (!response.ok) throw new Error("Unable to load records.");
-      const payload = await response.json() as { data: Array<{ id: string; type: string; title: string; description?: string | null; status: string; metadata?: Record<string, string> | null; createdAt: string }> };
+      const payload = await response.json() as { data: ApiActivityRecord[] };
       setRecords(payload.data
         .filter((record) => record.type === activityType)
         .map((record) => ({
@@ -60,6 +72,7 @@ export default function ActivityModule({
           status: record.status === "DRAFT" ? "Draft" : record.status === "APPROVED" ? "Approved" : record.status === "REJECTED" ? "Rejected" : "Submitted",
           createdAt: new Intl.DateTimeFormat("en-IN", { dateStyle: "medium" }).format(new Date(record.createdAt)),
           values: { title: record.title, ...(record.metadata ?? {}), description: record.description ?? "" },
+          rejectionReason: record.approvals?.find((approval) => approval.action === "REJECTED")?.comment?.trim(),
         })));
     } catch {
       setError("Sign in to load your records. Your saved data is stored in the ERP database.");
@@ -195,27 +208,37 @@ export default function ActivityModule({
             {filteredRecords.map((record) => (
               <article className={styles.recordCard} key={record.id}>
                 <div className={styles.cardTop}>
-                  <span className={record.status === "Submitted" ? styles.submitted : styles.draft}>
+                  <span className={record.status === "Rejected" ? styles.rejected : record.status === "Submitted" ? styles.submitted : styles.draft}>
                     {record.status}
                   </span>
                   <span className={styles.date}>{record.createdAt}</span>
                 </div>
                 <h3>{record.values[fields[0]?.key] || itemLabel}</h3>
                 <p>{record.values[fields[1]?.key] || "No additional details added yet."}</p>
+                {record.status === "Rejected" && (
+                  <div className={styles.rejectionNotice}>
+                    <strong>Your submission was rejected.</strong>
+                    {record.rejectionReason && (
+                      <div><strong>Reviewer’s reason</strong><div>{record.rejectionReason}</div></div>
+                    )}
+                  </div>
+                )}
                 <div className={styles.cardFooter}>
                   <span>{fields.length} details available</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditingId(record.id);
-                      setSubmitMode(record.status === "Draft" ? "Draft" : "Submitted");
-                      setValues(record.values);
-                      setError("");
-                      setFormOpen(true);
-                    }}
-                  >
-                    Edit
-                  </button>
+                  {record.status !== "Rejected" && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingId(record.id);
+                        setSubmitMode(record.status === "Draft" ? "Draft" : "Submitted");
+                        setValues(record.values);
+                        setError("");
+                        setFormOpen(true);
+                      }}
+                    >
+                      Edit
+                    </button>
+                  )}
                 </div>
               </article>
             ))}

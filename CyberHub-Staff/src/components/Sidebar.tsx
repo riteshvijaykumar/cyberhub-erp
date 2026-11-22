@@ -37,6 +37,12 @@ const IcoApprovals = () => (
     <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
   </svg>
 );
+const IcoStudents = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+    <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+  </svg>
+);
 const IcoAnalytics = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/>
@@ -72,8 +78,9 @@ const NAV_ITEMS = [
   { href: "/events",    label: "My Events",  icon: <IcoEvents />    },
   { href: "/add-event", label: "Add Event",  icon: <IcoAddEvent />  },
   { href: "/documents", label: "Documents",  icon: <IcoDocuments /> },
-  { href: "/approvals", label: "Approvals",  icon: <IcoApprovals /> },
-  { href: "/analytics", label: "Analytics",  icon: <IcoAnalytics /> },
+  { href: "/approvals",        label: "Approvals",        icon: <IcoApprovals /> },
+  { href: "/student-records", label: "Student Records", icon: <IcoStudents />  },
+  { href: "/analytics",       label: "Analytics",       icon: <IcoAnalytics /> },
   { href: "/reports",   label: "Reports",    icon: <IcoReports />   },
 ];
 
@@ -109,7 +116,7 @@ export default function Sidebar() {
           <Link
             key={item.href}
             href={item.href}
-            className={`${styles.navLink} ${pathname === item.href ? styles.active : ""}`}
+            className={`${styles.navLink} ${pathname === item.href || pathname.startsWith(`${item.href}/`) ? styles.active : ""}`}
           >
             {item.icon}
             {item.label}

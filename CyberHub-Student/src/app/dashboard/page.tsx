@@ -47,6 +47,17 @@ export default function DashboardPage() {
           </p>
         </section>
 
+        <div role="status">
+          {summary && summary.rejected > 0 && (
+            <p style={{ margin: "18px 0 0", padding: "12px 16px", borderRadius: "8px", background: "#fff1f2", color: "#9f1239" }}>
+              {summary.rejected === 1
+                ? "One of your submissions was rejected."
+                : `${summary.rejected} of your submissions were rejected.`}{" "}
+              Open the relevant activity and select Rejected to see the details.
+            </p>
+          )}
+        </div>
+
         <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: "12px", marginTop: "18px" }} aria-label="Achievement summary">
           {[
             ["Total records", summary?.total],
