@@ -30,6 +30,8 @@ const achievementSchema = z.object({
   type: z.nativeEnum(AchievementType),
   title: z.string().trim().min(3).max(200),
   description: z.string().trim().max(5000).optional(),
+  values: z.record(z.string(), z.string()).optional().default({}),
+  status: z.enum(["DRAFT", "SUBMITTED"]).default("SUBMITTED"),
 });
 
 const reviewSchema = z.object({
@@ -216,6 +218,37 @@ app.get("/api/v1/achievements", async (request, reply) => {
   return { data: achievements };
 });
 
+app.get("/api/v1/student/summary", async (request, reply) => {
+  const user = await getCurrentUser(request);
+  if (!user || user.role !== UserRole.STUDENT || !user.student) {
+    return reply.code(403).send({ error: { code: "FORBIDDEN", message: "Student access required." } });
+  }
+  const [records, grouped] = await Promise.all([
+    prisma.achievement.findMany({
+      where: { studentId: user.student.id },
+      select: { id: true, type: true, title: true, status: true, createdAt: true },
+      orderBy: { createdAt: "desc" },
+      take: 5,
+    }),
+    prisma.achievement.groupBy({
+      by: ["type", "status"],
+      where: { studentId: user.student.id },
+      _count: { _all: true },
+    }),
+  ]);
+  const counts = { total: 0, draft: 0, submitted: 0, approved: 0, rejected: 0 };
+  const byType: Partial<Record<AchievementType, number>> = {};
+  for (const row of grouped) {
+    counts.total += row._count._all;
+    if (row.status === AchievementStatus.DRAFT) counts.draft += row._count._all;
+    if (row.status === AchievementStatus.SUBMITTED) counts.submitted += row._count._all;
+    if (row.status === AchievementStatus.APPROVED) counts.approved += row._count._all;
+    if (row.status === AchievementStatus.REJECTED) counts.rejected += row._count._all;
+    byType[row.type] = (byType[row.type] ?? 0) + row._count._all;
+  }
+  return { data: { counts, byType, recent: records } };
+});
+
 app.post("/api/v1/achievements", async (request, reply) => {
   const user = await getCurrentUser(request);
   if (!user || user.role !== UserRole.STUDENT || !user.student) {
@@ -227,14 +260,49 @@ app.post("/api/v1/achievements", async (request, reply) => {
   }
   const achievement = await prisma.achievement.create({
     data: {
-      ...parsed.data,
+      type: parsed.data.type,
+      title: parsed.data.title,
+      description: parsed.data.description,
       studentId: user.student.id,
       submittedBy: user.id,
-      status: AchievementStatus.SUBMITTED,
-      submittedAt: new Date(),
+      status: parsed.data.status === "DRAFT" ? AchievementStatus.DRAFT : AchievementStatus.SUBMITTED,
+      submittedAt: parsed.data.status === "SUBMITTED" ? new Date() : null,
+      metadata: parsed.data.values,
     },
   });
   return reply.code(201).send({ data: achievement });
+});
+
+app.patch("/api/v1/achievements/:id", async (request, reply) => {
+  const user = await getCurrentUser(request);
+  if (!user || user.role !== UserRole.STUDENT || !user.student) {
+    return reply.code(403).send({ error: { code: "FORBIDDEN", message: "Only students can edit achievements." } });
+  }
+  const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+  const parsed = achievementSchema.safeParse(request.body);
+  if (!params.success || !parsed.success) {
+    return reply.code(400).send({ error: { code: "VALIDATION_ERROR", message: "Enter valid achievement details." } });
+  }
+  const existing = await prisma.achievement.findFirst({
+    where: { id: params.data.id, studentId: user.student.id },
+  });
+  if (!existing) return reply.code(404).send({ error: { code: "NOT_FOUND", message: "Achievement not found." } });
+  if (existing.status === AchievementStatus.APPROVED || existing.status === AchievementStatus.REJECTED) {
+    return reply.code(409).send({ error: { code: "INVALID_STATE", message: "Reviewed achievements cannot be edited." } });
+  }
+  const status = parsed.data.status === "DRAFT" ? AchievementStatus.DRAFT : AchievementStatus.SUBMITTED;
+  const updated = await prisma.achievement.update({
+    where: { id: existing.id },
+    data: {
+      type: parsed.data.type,
+      title: parsed.data.title,
+      description: parsed.data.description,
+      metadata: parsed.data.values,
+      status,
+      submittedAt: status === AchievementStatus.SUBMITTED ? (existing.submittedAt ?? new Date()) : null,
+    },
+  });
+  return { data: updated };
 });
 
 app.patch("/api/v1/achievements/:id/review", async (request, reply) => {

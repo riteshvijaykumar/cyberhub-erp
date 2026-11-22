@@ -133,10 +133,21 @@ and staff credentials are checked by the API, then students are sent to the
 student portal and faculty, HOD, and administrator accounts are sent to the
 staff portal. The session cookie is shared across both local portal ports.
 
-The student portal includes UI workspaces for research, workshops,
-conferences, volunteering, hackathons, leadership, and awards. These new
-workspaces support search, status filters, draft/submission forms, and
-session-only records until dedicated API and database models are introduced.
+The student portal activity workspaces are database-backed. Projects,
+internships, certificates, competitions, publications, patents, research,
+workshops, conferences, volunteering, hackathons, leadership, and awards all
+use the shared achievement API. Drafts, submissions, approvals, and rejections
+are scoped to the authenticated student, and the dashboard counters are
+calculated from persisted records rather than sample data.
+
+The shared activity endpoints are:
+
+```text
+GET   /api/v1/achievements
+POST  /api/v1/achievements
+PATCH /api/v1/achievements/:id
+GET   /api/v1/student/summary
+```
 
 ## Profile and authorization foundation
 

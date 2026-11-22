@@ -21,6 +21,13 @@ enum AchievementType {
   COMPETITION
   PUBLICATION
   PATENT
+  RESEARCH
+  WORKSHOP
+  CONFERENCE
+  HACKATHON
+  LEADERSHIP
+  VOLUNTEERING
+  AWARD
 }
 
 enum AchievementStatus {
@@ -98,6 +105,7 @@ model Achievement {
   type         AchievementType
   title        String
   description  String?
+  metadata     Json?
   status       AchievementStatus  @default(DRAFT)
   submittedAt  DateTime?
   reviewedAt   DateTime?

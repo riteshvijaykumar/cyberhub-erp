@@ -1,4 +1,7 @@
+ "use client";
+
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import DashboardLayout from "@/components/DashboardLayout/DashboardLayout";
 import Header from "@/components/Header/Header";
 
@@ -19,6 +22,19 @@ const modules = [
 ];
 
 export default function DashboardPage() {
+  const [summary, setSummary] = useState<{ total: number; draft: number; submitted: number; approved: number; rejected: number } | null>(null);
+  const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void fetch(`${API_URL}/api/v1/student/summary`, { credentials: "include" })
+        .then((response) => response.ok ? response.json() as Promise<{ data: { counts: typeof summary } }> : Promise.reject(new Error("Unable to load summary.")))
+        .then((payload) => setSummary(payload.data.counts))
+        .catch(() => setSummary(null));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [API_URL]);
+
   return (
     <DashboardLayout>
       <Header title="Dashboard" subtitle="Your academic achievement workspace" />
@@ -29,6 +45,21 @@ export default function DashboardPage() {
           <p style={{ maxWidth: "640px", margin: "9px 0 0", color: "#c7d7e8", fontSize: ".86rem", lineHeight: 1.55 }}>
             Add achievements, track your participation, and keep every part of your student portfolio ready for review.
           </p>
+        </section>
+
+        <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: "12px", marginTop: "18px" }} aria-label="Achievement summary">
+          {[
+            ["Total records", summary?.total],
+            ["Submitted", summary?.submitted],
+            ["Approved", summary?.approved],
+            ["Drafts", summary?.draft],
+            ["Needs attention", summary?.rejected],
+          ].map(([label, value]) => (
+            <div key={label as string} style={{ padding: "16px", background: "#fff", border: "1px solid #e8eef4", borderRadius: "13px" }}>
+              <span style={{ display: "block", color: "#64748b", fontSize: ".74rem" }}>{label}</span>
+              <strong style={{ display: "block", marginTop: "7px", color: "#0d1f3c", fontSize: "1.45rem" }}>{value ?? "—"}</strong>
+            </div>
+          ))}
         </section>
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "end", gap: "16px", margin: "28px 0 14px" }}>

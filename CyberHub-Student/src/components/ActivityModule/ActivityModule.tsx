@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import DashboardLayout from "@/components/DashboardLayout/DashboardLayout";
 import Header from "@/components/Header/Header";
 import styles from "./ActivityModule.module.css";
@@ -13,6 +13,7 @@ export interface ActivityField {
 }
 
 export interface ActivityModuleProps {
+  activityType: "PROJECT" | "INTERNSHIP" | "CERTIFICATE" | "COMPETITION" | "PUBLICATION" | "PATENT" | "RESEARCH" | "WORKSHOP" | "CONFERENCE" | "HACKATHON" | "LEADERSHIP" | "VOLUNTEERING" | "AWARD";
   title: string;
   subtitle: string;
   eyebrow: string;
@@ -21,13 +22,16 @@ export interface ActivityModuleProps {
 }
 
 interface ActivityRecord {
-  id: number;
-  status: "Draft" | "Submitted";
+  id: string;
+  status: "Draft" | "Submitted" | "Approved" | "Rejected";
   createdAt: string;
   values: Record<string, string>;
 }
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+
 export default function ActivityModule({
+  activityType,
   title,
   subtitle,
   eyebrow,
@@ -39,9 +43,35 @@ export default function ActivityModule({
   const [statusFilter, setStatusFilter] = useState<"All" | ActivityRecord["status"]>("All");
   const [formOpen, setFormOpen] = useState(false);
   const [submitMode, setSubmitMode] = useState<"Draft" | "Submitted">("Draft");
-  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [values, setValues] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+
+  const loadRecords = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/v1/achievements`, { credentials: "include" });
+      if (!response.ok) throw new Error("Unable to load records.");
+      const payload = await response.json() as { data: Array<{ id: string; type: string; title: string; description?: string | null; status: string; metadata?: Record<string, string> | null; createdAt: string }> };
+      setRecords(payload.data
+        .filter((record) => record.type === activityType)
+        .map((record) => ({
+          id: record.id,
+          status: record.status === "DRAFT" ? "Draft" : record.status === "APPROVED" ? "Approved" : record.status === "REJECTED" ? "Rejected" : "Submitted",
+          createdAt: new Intl.DateTimeFormat("en-IN", { dateStyle: "medium" }).format(new Date(record.createdAt)),
+          values: { title: record.title, ...(record.metadata ?? {}), description: record.description ?? "" },
+        })));
+    } catch {
+      setError("Sign in to load your records. Your saved data is stored in the ERP database.");
+    } finally {
+      setLoading(false);
+    }
+  }, [activityType]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void loadRecords(); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [loadRecords]);
 
   const filteredRecords = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -64,7 +94,7 @@ export default function ActivityModule({
     setFormOpen(true);
   };
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const firstField = fields[0];
     if (!firstField || !values[firstField.key]?.trim()) {
@@ -72,25 +102,32 @@ export default function ActivityModule({
       return;
     }
 
-    setRecords((current) => {
-      if (editingId !== null) {
-        return current.map((record) =>
-          record.id === editingId ? { ...record, status: submitMode, values } : record,
-        );
-      }
-
-      return [
-        {
-          id: Date.now(),
-          status: submitMode,
-          createdAt: new Intl.DateTimeFormat("en-IN", {
-            dateStyle: "medium",
-          }).format(new Date()),
+    const title = values[firstField.key].trim();
+    const description = Object.entries(values)
+      .filter(([key]) => key !== firstField.key)
+      .map(([key, value]) => `${fields.find((field) => field.key === key)?.label ?? key}: ${value}`)
+      .filter(Boolean)
+      .join("\n");
+    const response = await fetch(
+      `${API_URL}/api/v1/achievements${editingId !== null ? `/${editingId}` : ""}`,
+      {
+        method: editingId !== null ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          type: activityType,
+          title,
+          description,
+          status: submitMode === "Draft" ? "DRAFT" : "SUBMITTED",
           values,
-        },
-        ...current,
-      ];
-    });
+        }),
+      },
+    );
+    if (!response.ok) {
+      setError("Unable to save this record. Please try again.");
+      return;
+    }
+    await loadRecords();
     setValues({});
     setEditingId(null);
     setFormOpen(false);
@@ -123,7 +160,7 @@ export default function ActivityModule({
           <div className={styles.statCard}><span>Total records</span><strong>{records.length}</strong></div>
           <div className={styles.statCard}><span>Submitted</span><strong>{records.filter((record) => record.status === "Submitted").length}</strong></div>
           <div className={styles.statCard}><span>Drafts</span><strong>{records.filter((record) => record.status === "Draft").length}</strong></div>
-          <div className={styles.statCard}><span>Next step</span><strong className={styles.nextStep}>Add details</strong></div>
+          <div className={styles.statCard}><span>Next step</span><strong className={styles.nextStep}>{records.length ? "Keep current" : "Add details"}</strong></div>
         </section>
 
         <section className={styles.toolbar}>
@@ -138,7 +175,7 @@ export default function ActivityModule({
             />
           </label>
           <div className={styles.filters} aria-label="Filter records">
-            {(["All", "Submitted", "Draft"] as const).map((filter) => (
+            {(["All", "Submitted", "Draft", "Approved", "Rejected"] as const).map((filter) => (
               <button
                 type="button"
                 key={filter}
@@ -151,7 +188,9 @@ export default function ActivityModule({
           </div>
         </section>
 
-        {filteredRecords.length > 0 ? (
+        {loading ? (
+          <section className={styles.empty}><h3>Loading your records…</h3></section>
+        ) : filteredRecords.length > 0 ? (
           <section className={styles.grid} aria-label={`${title} records`}>
             {filteredRecords.map((record) => (
               <article className={styles.recordCard} key={record.id}>
@@ -169,7 +208,7 @@ export default function ActivityModule({
                     type="button"
                     onClick={() => {
                       setEditingId(record.id);
-                      setSubmitMode(record.status);
+                      setSubmitMode(record.status === "Draft" ? "Draft" : "Submitted");
                       setValues(record.values);
                       setError("");
                       setFormOpen(true);
@@ -199,7 +238,7 @@ export default function ActivityModule({
         )}
 
         <p className={styles.notice}>
-          This UI is ready for submissions. Entries are kept in this browser session until the module API and database model are connected.
+          Records are saved to your authenticated ERP account and remain available across devices.
         </p>
       </div>
 
