@@ -109,3 +109,14 @@
   flex-direction: column;
   gap: 0.15rem;
 }
+
+.navigation { display: flex; flex: 1; flex-direction: column; }
+.menuToggle { display: none; }
+
+@media (max-width: 760px) {
+  .sidebar { position: relative; width: 100%; min-width: 0; height: auto; overflow: visible; border-right: 0; border-bottom: 1px solid var(--border); }
+  .brand { padding: 0.65rem 1rem; padding-right: 5rem; border: 0; }
+  .menuToggle { display: block; position: absolute; right: 1rem; top: 0.65rem; min-height: 36px; padding: 0.35rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius-md); background: white; color: var(--primary-dark); }
+  .sidebar[data-expanded="false"] .navigation { display: none; }
+  .navLink { min-height: 44px; }
+}

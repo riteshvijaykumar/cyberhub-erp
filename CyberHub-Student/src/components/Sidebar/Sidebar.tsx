@@ -2,6 +2,7 @@
 
 import React from "react";
 import Link from "next/link";
+import { useState } from "react";
 import { usePathname } from "next/navigation";
 import styles from "./Sidebar.module.css";
 
@@ -36,10 +37,6 @@ const navItems = [
   {
     label: "Dashboard", href: "/dashboard",
     icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>,
-  },
-  {
-    label: "Profile", href: "/profile",
-    icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>,
   },
   {
     label: "Competitions", href: "/competitions",
@@ -97,9 +94,28 @@ const navItems = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const profileActive = pathname === "/profile";
+  const [expanded, setExpanded] = useState(false);
+  const [logoutError, setLogoutError] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  const logout = async () => {
+    setLogoutError(false);
+    setLoggingOut(true);
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000"}/api/v1/auth/logout`, {
+        method: "POST", credentials: "include",
+      });
+      if (!response.ok) throw new Error();
+      window.location.replace(`${process.env.NEXT_PUBLIC_AUTH_PORTAL_URL ?? "http://localhost:3001"}/login`);
+    } catch {
+      setLogoutError(true);
+      setLoggingOut(false);
+    }
+  };
 
   return (
-    <aside className={styles.sidebar}>
+    <aside className={styles.sidebar} data-expanded={expanded}>
       {/* Logo */}
       <div className={styles.logo}>
         <div className={styles.logoIcon}><HexLogo /></div>
@@ -113,7 +129,8 @@ export default function Sidebar() {
       </div>
 
       {/* Nav */}
-      <nav className={styles.nav}>
+      <button type="button" className={styles.menuToggle} aria-expanded={expanded} aria-controls="student-navigation student-account" onClick={() => setExpanded(!expanded)}>Menu</button>
+      <nav className={styles.nav} id="student-navigation" aria-label="Student navigation">
         <ul className={styles.navList}>
           {navItems.map((item) => {
             const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
@@ -121,6 +138,9 @@ export default function Sidebar() {
               <li key={item.href}>
                 <Link
                   href={item.href}
+                  prefetch={false}
+                  onClick={() => setExpanded(false)}
+                  aria-current={isActive ? "page" : undefined}
                   className={`${styles.navLink} ${isActive ? styles.active : ""}`}
                 >
                   <span className={styles.navIcon}>{item.icon}</span>
@@ -131,6 +151,28 @@ export default function Sidebar() {
           })}
         </ul>
       </nav>
+      <div id="student-account" className={styles.account}>
+        <Link
+          href="/profile"
+          prefetch={false}
+          aria-current={profileActive ? "page" : undefined}
+          className={`${styles.navLink} ${styles.profileLink} ${profileActive ? styles.active : ""}`}
+          onClick={() => setExpanded(false)}
+        >
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+            <circle cx="12" cy="7" r="4" />
+          </svg>
+          Profile
+        </Link>
+        <button type="button" className={styles.logoutButton} disabled={loggingOut} onClick={() => void logout()}>
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M10 17l5-5-5-5m5 5H3m9-8h6a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6" />
+          </svg>
+          {loggingOut ? "Signing out…" : "Logout"}
+        </button>
+        {logoutError && <p className={styles.logoutError} role="alert">Sign-out failed. Try again.</p>}
+      </div>
     </aside>
   );
 }

@@ -38,29 +38,9 @@ const FOCUS_AREAS = [
 
 const EVENT_TYPES = ["Conference", "Workshop", "Seminar", "FDP", "Webinar", "Symposium", "Guest Lecture", "Hackathon", "Competition", "Exhibition", "Training Program", "Other"];
 
-const DOC_TYPES = [
-  { key: "certificate",    label: "Certificate",     icon: "🏅" },
-  { key: "approval",       label: "Approval Letter", icon: "📋" },
-  { key: "poster",         label: "Event Poster",    icon: "🖼️" },
-  { key: "brochure",       label: "Brochure",        icon: "📄" },
-  { key: "report",         label: "Event Report",    icon: "📊" },
-  { key: "attendance",     label: "Attendance Sheet",icon: "📝" },
-  { key: "photos",         label: "Event Photos",    icon: "📸" },
-];
-
-interface UploadedFile {
-  id: string;
-  name: string;
-  type: string;
-  size: string;
-  docType: string;
-  progress: number;
-  done: boolean;
-}
-
 interface FormData {
   // Step 1
-  eventName: string; eventType: string; organizer: string; department: string;
+  eventName: string; eventType: string; customEventType: string; organizer: string; department: string;
   eventDate: string; startTime: string; endTime: string; venue: string;
   format: string;
   // Step 2
@@ -71,25 +51,31 @@ interface FormData {
   organizingResponsibility: string;
   // Step 4
   sdgs: number[]; focusAreas: string[];
-  // Step 5
-  files: UploadedFile[];
 }
 
 const INITIAL: FormData = {
-  eventName:"", eventType:"", organizer:"", department:"", eventDate:"", startTime:"", endTime:"", venue:"", format:"offline",
+  eventName:"", eventType:"", customEventType:"", organizer:"", department:"", eventDate:"", startTime:"", endTime:"", venue:"", format:"offline",
   description:"", objectives:"", keyTopics:"", eventOutcome:"", chiefGuest:"", numParticipants:"", targetAudience:"", coordinators:"",
   facultyRole:"", participationType:"", certAvailable:false, organizingResponsibility:"",
   sdgs:[], focusAreas:[],
-  files:[],
 };
 
 const STEPS = [
-  { num:1, label:"Basic Information", sub:"Event name, type & venue" },
-  { num:2, label:"Event Details",     sub:"Description & outcomes"   },
-  { num:3, label:"Participation",     sub:"Role & responsibilities"  },
-  { num:4, label:"SDG & Focus",       sub:"Align to goals"           },
-  { num:5, label:"Documents",         sub:"Upload proof & files"     },
-  { num:6, label:"Review & Submit",   sub:"Final check"              },
+  { num:1, label:"Event Setup",       sub:"Event mode & type"       },
+  { num:2, label:"Basic Information", sub:"Event name, date & venue" },
+  { num:3, label:"Event Details",     sub:"Description & outcomes"  },
+  { num:4, label:"Participation",     sub:"Role & responsibilities" },
+  { num:5, label:"SDG & Focus",       sub:"Align to goals"           },
+  { num:6, label:"Review & Save",    sub:"Final check"             },
+];
+
+function getEventType(data: FormData) {
+  return data.eventType === "Other" ? data.customEventType.trim() : data.eventType;
+}
+
+const EVENT_MODES: { value: EventMode; label: string; description: string }[] = [
+  { value: "attended", label: "Attended", description: "You took part in an event organized by someone else." },
+  { value: "conducted", label: "Conducted", description: "You organized, coordinated, or ran the event." },
 ];
 
 /* ══════════════════════════════════════════════════
@@ -99,10 +85,6 @@ const Ico = {
   Check:  () => <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>,
   Arrow:  () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>,
   Back:   () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>,
-  Save:   () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>,
-  Upload: () => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>,
-  File:   () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>,
-  X:      () => <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
   Submit: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>,
   Pin:    () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>,
   Tag:    () => <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>,
@@ -124,49 +106,44 @@ function Step1({ data, set }: { data:FormData; set:(k:keyof FormData,v:unknown)=
     <div className={s.stepCardBody}>
       <div className={s.formRow}>
         <div className={`${s.formGroup} ${s.formGroupFull}`}>
-          <label className={s.fieldLabel}>Event Name <span className={s.required}>*</span></label>
-          <input className={s.fieldInput} placeholder="e.g. National Cybersecurity Summit 2024"
+          <label className={s.fieldLabel} htmlFor="eventName">Event Name <span className={s.required}>*</span></label>
+          <input id="eventName" className={s.fieldInput} placeholder="e.g. National Cybersecurity Summit 2024"
             value={data.eventName} onChange={e=>set("eventName",e.target.value)}/>
         </div>
       </div>
       <div className={s.formRow}>
         <div className={s.formGroup}>
-          <label className={s.fieldLabel}>Event Type <span className={s.required}>*</span></label>
-          <select className={s.fieldSelect} value={data.eventType} onChange={e=>set("eventType",e.target.value)}>
-            <option value="">Select event type…</option>
-            {EVENT_TYPES.map(t=><option key={t}>{t}</option>)}
-          </select>
-        </div>
-        <div className={s.formGroup}>
-          <label className={s.fieldLabel}>Organizer / Institution <span className={s.required}>*</span></label>
-          <input className={s.fieldInput} placeholder="e.g. IIT Madras / IEEE"
+          <label className={s.fieldLabel} htmlFor="organizer">Organizer / Institution <span className={s.required}>*</span></label>
+          <input id="organizer" className={s.fieldInput} placeholder="e.g. IIT Madras / IEEE"
             value={data.organizer} onChange={e=>set("organizer",e.target.value)}/>
         </div>
       </div>
       <div className={s.formRow}>
         <div className={s.formGroup}>
-          <label className={s.fieldLabel}>Department</label>
-          <input className={s.fieldInput} placeholder="e.g. Computer Science & Engineering"
+          <label className={s.fieldLabel} htmlFor="department">Department</label>
+          <input id="department" className={s.fieldInput} placeholder="e.g. Computer Science & Engineering"
             value={data.department} onChange={e=>set("department",e.target.value)}/>
         </div>
         <div className={s.formGroup}>
-          <label className={s.fieldLabel}>Event Date <span className={s.required}>*</span></label>
-          <input type="date" className={s.fieldInput} value={data.eventDate} onChange={e=>set("eventDate",e.target.value)}/>
+          <label className={s.fieldLabel} htmlFor="eventDate">Event Date <span className={s.required}>*</span></label>
+          <input id="eventDate" type="date" className={s.fieldInput} value={data.eventDate} onChange={e=>set("eventDate",e.target.value)}/>
         </div>
       </div>
       <div className={s.formRow3}>
         <div className={s.formGroup}>
-          <label className={s.fieldLabel}>Start Time</label>
-          <input type="time" className={s.fieldInput} value={data.startTime} onChange={e=>set("startTime",e.target.value)}/>
+          <label className={s.fieldLabel} htmlFor="startTime">Start Time</label>
+          <input id="startTime" type="time" className={s.fieldInput} value={data.startTime} onChange={e=>set("startTime",e.target.value)}/>
         </div>
         <div className={s.formGroup}>
-          <label className={s.fieldLabel}>End Time</label>
-          <input type="time" className={s.fieldInput} value={data.endTime} onChange={e=>set("endTime",e.target.value)}/>
+          <label className={s.fieldLabel} htmlFor="endTime">End Time</label>
+          <input id="endTime" type="time" className={s.fieldInput} value={data.endTime} onChange={e=>set("endTime",e.target.value)}/>
         </div>
         <div className={s.formGroup}>
-          <label className={s.fieldLabel}>Duration</label>
-          <input className={s.fieldInput} placeholder="e.g. 2 Days" disabled
-            value={data.startTime && data.endTime ? "Calculated" : ""}/>
+          <label className={s.fieldLabel} htmlFor="duration">Duration</label>
+          <input id="duration" className={s.fieldInput} placeholder="e.g. 2 Days" disabled
+            value={data.startTime && data.endTime && data.endTime > data.startTime
+              ? `${Number(data.endTime.slice(0, 2)) * 60 + Number(data.endTime.slice(3)) - Number(data.startTime.slice(0, 2)) * 60 - Number(data.startTime.slice(3))} min`
+              : ""}/>
         </div>
       </div>
       <div className={s.formGroup}>
@@ -199,27 +176,27 @@ function Step2({ data, set, mode }: { data:FormData; set:(k:keyof FormData,v:unk
   return (
     <div className={s.stepCardBody}>
       <div className={s.formGroup}>
-        <label className={s.fieldLabel}>Description <span className={s.required}>*</span></label>
-        <textarea className={s.fieldTextarea} rows={4}
+        <label className={s.fieldLabel} htmlFor="description">Description <span className={s.required}>*</span></label>
+        <textarea id="description" className={s.fieldTextarea} rows={4}
           placeholder="Provide a comprehensive description of the event, its context and significance…"
           value={data.description} onChange={e=>set("description",e.target.value)}/>
       </div>
       <div className={s.formGroup}>
-        <label className={s.fieldLabel}>Objectives</label>
-        <textarea className={s.fieldTextarea} rows={3}
+        <label className={s.fieldLabel} htmlFor="objectives">Objectives</label>
+        <textarea id="objectives" className={s.fieldTextarea} rows={3}
           placeholder="List the key objectives of this event (one per line)…"
           value={data.objectives} onChange={e=>set("objectives",e.target.value)}/>
       </div>
       <div className={s.formRow}>
         <div className={s.formGroup}>
-          <label className={s.fieldLabel}>Key Topics Covered</label>
-          <textarea className={s.fieldTextarea} rows={3}
+          <label className={s.fieldLabel} htmlFor="keyTopics">Key Topics Covered</label>
+          <textarea id="keyTopics" className={s.fieldTextarea} rows={3}
             placeholder="e.g. Zero Trust Security, Network Forensics, AI in Threat Detection…"
             value={data.keyTopics} onChange={e=>set("keyTopics",e.target.value)}/>
         </div>
         <div className={s.formGroup}>
-          <label className={s.fieldLabel}>Event Outcome / Learning</label>
-          <textarea className={s.fieldTextarea} rows={3}
+          <label className={s.fieldLabel} htmlFor="eventOutcome">Event Outcome / Learning</label>
+          <textarea id="eventOutcome" className={s.fieldTextarea} rows={3}
             placeholder="What was achieved or learned from this event?"
             value={data.eventOutcome} onChange={e=>set("eventOutcome",e.target.value)}/>
         </div>
@@ -230,8 +207,8 @@ function Step2({ data, set, mode }: { data:FormData; set:(k:keyof FormData,v:unk
           <div className={s.conductedTag}><Ico.Tag/> Conducted Event — Additional Details</div>
           <div className={s.formRow}>
             <div className={s.formGroup}>
-              <label className={s.fieldLabel}>Chief Guest / Speaker</label>
-              <input className={s.fieldInput} placeholder="e.g. Dr. A.P.J Abdul Kalam"
+              <label className={s.fieldLabel} htmlFor="chiefGuest">Chief Guest / Speaker</label>
+              <input id="chiefGuest" className={s.fieldInput} placeholder="e.g. Dr. A.P.J Abdul Kalam"
                 value={data.chiefGuest} onChange={e=>set("chiefGuest",e.target.value)}/>
             </div>
             <div className={s.formGroup}>
@@ -242,13 +219,13 @@ function Step2({ data, set, mode }: { data:FormData; set:(k:keyof FormData,v:unk
           </div>
           <div className={s.formRow}>
             <div className={s.formGroup}>
-              <label className={s.fieldLabel}>Target Audience</label>
-              <input className={s.fieldInput} placeholder="e.g. UG Students, Industry Professionals"
+              <label className={s.fieldLabel} htmlFor="targetAudience">Target Audience</label>
+              <input id="targetAudience" className={s.fieldInput} placeholder="e.g. UG Students, Industry Professionals"
                 value={data.targetAudience} onChange={e=>set("targetAudience",e.target.value)}/>
             </div>
             <div className={s.formGroup}>
-              <label className={s.fieldLabel}>Coordinators</label>
-              <input className={s.fieldInput} placeholder="Names of co-organizers…"
+              <label className={s.fieldLabel} htmlFor="coordinators">Coordinators</label>
+              <input id="coordinators" className={s.fieldInput} placeholder="Names of co-organizers…"
                 value={data.coordinators} onChange={e=>set("coordinators",e.target.value)}/>
             </div>
           </div>
@@ -402,94 +379,6 @@ function Step4({ data, set }: { data:FormData; set:(k:keyof FormData,v:unknown)=
   );
 }
 
-/* ── Step 5: Documents ── */
-function Step5({ data, set }: { data:FormData; set:(k:keyof FormData,v:unknown)=>void }) {
-  const [dragging, setDragging] = useState<string|null>(null);
-  const inputRefs = useRef<Record<string,HTMLInputElement|null>>({});
-
-  const addFiles = (files:File[], docType:string) => {
-    const newFiles: UploadedFile[] = files.map(f=>({
-      id: `${Date.now()}-${Math.random()}`,
-      name: f.name,
-      type: f.type || "application/octet-stream",
-      size: f.size > 1024*1024 ? `${(f.size/1024/1024).toFixed(1)} MB` : `${Math.round(f.size/1024)} KB`,
-      docType,
-      progress: 100,
-      done: true,
-    }));
-    set("files", [...data.files, ...newFiles]);
-  };
-
-  const handleDrop = (e:React.DragEvent, docType:string)=>{
-    e.preventDefault(); setDragging(null);
-    const files = Array.from(e.dataTransfer.files);
-    addFiles(files, docType);
-  };
-
-  const removeFile = (id:string) => set("files", data.files.filter((f:UploadedFile)=>f.id!==id));
-
-  const extIcon = (name:string) => {
-    const ext = name.split(".").pop()?.toLowerCase();
-    if(["jpg","jpeg","png","gif","webp"].includes(ext||"")) return "🖼️";
-    if(ext==="pdf") return "📄";
-    if(["doc","docx"].includes(ext||"")) return "📝";
-    return "📎";
-  };
-
-  return (
-    <div className={s.stepCardBody}>
-      <div className={s.docSection}>
-        <div className={s.docTypeGrid}>
-          {DOC_TYPES.map(dt=>(
-            <div key={dt.key}>
-              <p style={{fontSize:"0.76rem",fontWeight:700,color:"var(--text-secondary)",marginBottom:"0.4rem"}}>{dt.icon} {dt.label}</p>
-              <div className={`${s.dropZone} ${dragging===dt.key?s.dropZoneActive:""}`}
-                onDragOver={e=>{e.preventDefault();setDragging(dt.key)}}
-                onDragLeave={()=>setDragging(null)}
-                onDrop={e=>handleDrop(e,dt.key)}
-                onClick={()=>inputRefs.current[dt.key]?.click()}>
-                <div className={s.dropIcon}><Ico.Upload/></div>
-                <div className={s.dropTitle}>Drag & drop here</div>
-                <div className={s.dropSubtitle}>PDF, PNG, JPG up to 10 MB</div>
-                <button type="button" className={s.dropBrowse}
-                  onClick={e=>{e.stopPropagation();inputRefs.current[dt.key]?.click()}}>
-                  Browse Files
-                </button>
-                <input ref={el=>{inputRefs.current[dt.key]=el}} type="file" multiple hidden
-                  accept=".pdf,.png,.jpg,.jpeg,.doc,.docx"
-                  onChange={e=>{if(e.target.files) addFiles(Array.from(e.target.files),dt.key); e.target.value="";}}/>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {data.files.length > 0 && (
-          <div className={s.fileList}>
-            <div className={s.fileListHeader}>Attached Files ({data.files.length})</div>
-            {data.files.map((f:UploadedFile)=>(
-              <div key={f.id} className={s.fileItem}>
-                <div className={s.fileIconWrap}><span style={{fontSize:"1rem"}}>{extIcon(f.name)}</span></div>
-                <div className={s.fileInfo}>
-                  <div className={s.fileName}>{f.name}</div>
-                  <div className={s.fileMeta}>{DOC_TYPES.find(d=>d.key===f.docType)?.label || f.docType} · {f.size}</div>
-                  {!f.done && (
-                    <div className={s.fileProgress}>
-                      <div className={s.fileProgressBar} style={{width:`${f.progress}%`}}/>
-                    </div>
-                  )}
-                </div>
-                <button type="button" className={s.fileRemoveBtn} onClick={()=>removeFile(f.id)} aria-label="Remove file">
-                  <Ico.X/>
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 /* ── Step 6: Review ── */
 function Step6({ data, mode, goTo }: { data:FormData; mode:EventMode; goTo:(s:number)=>void }) {
   const field = (label:string, val:string|boolean|undefined) => val ? (
@@ -502,18 +391,18 @@ function Step6({ data, mode, goTo }: { data:FormData; mode:EventMode; goTo:(s:nu
   return (
     <div className={s.stepCardBody}>
       <p style={{fontSize:"0.82rem",color:"var(--text-secondary)"}}>
-        Please review all information carefully before submitting for approval.
+        Please review all information carefully before saving.
       </p>
       <div className={s.reviewGrid}>
 
         <div className={s.reviewSection}>
           <div className={s.reviewSectionHeader}>
             📋 Basic Information
-            <button className={s.reviewEditBtn} onClick={()=>goTo(1)}>Edit</button>
+            <button className={s.reviewEditBtn} onClick={()=>goTo(2)}>Edit</button>
           </div>
           <div className={s.reviewBody}>
             {field("Event Name", data.eventName || "—")}
-            {field("Event Type", data.eventType || "—")}
+            {field("Event Type", getEventType(data))}
             {field("Organizer",  data.organizer  || "—")}
             {field("Department", data.department || "—")}
             {field("Date",       data.eventDate  || "—")}
@@ -526,7 +415,7 @@ function Step6({ data, mode, goTo }: { data:FormData; mode:EventMode; goTo:(s:nu
         <div className={s.reviewSection}>
           <div className={s.reviewSectionHeader}>
             📝 Event Details
-            <button className={s.reviewEditBtn} onClick={()=>goTo(2)}>Edit</button>
+            <button className={s.reviewEditBtn} onClick={()=>goTo(3)}>Edit</button>
           </div>
           <div className={s.reviewBody}>
             {field("Description", data.description ? data.description.slice(0,100)+"…" : "—")}
@@ -542,60 +431,13 @@ function Step6({ data, mode, goTo }: { data:FormData; mode:EventMode; goTo:(s:nu
         <div className={s.reviewSection}>
           <div className={s.reviewSectionHeader}>
             👤 Participation
-            <button className={s.reviewEditBtn} onClick={()=>goTo(3)}>Edit</button>
+            <button className={s.reviewEditBtn} onClick={()=>goTo(4)}>Edit</button>
           </div>
           <div className={s.reviewBody}>
             {field("Faculty Role",        data.facultyRole        || "—")}
             {mode==="attended" && field("Participation Type", data.participationType || "—")}
             {mode==="attended" && field("Certificate",        data.certAvailable ? "Available" : "Not Available")}
             {mode==="conducted" && field("Responsibility",    data.organizingResponsibility || "—")}
-          </div>
-        </div>
-
-        <div className={s.reviewSection}>
-          <div className={s.reviewSectionHeader}>
-            🎯 SDG & Focus Areas
-            <button className={s.reviewEditBtn} onClick={()=>goTo(4)}>Edit</button>
-          </div>
-          <div className={s.reviewBody}>
-            <div className={s.reviewRow}>
-              <span className={s.reviewLabel}>SDGs</span>
-              <div>
-                {data.sdgs.length > 0 ? (
-                  <div className={s.reviewChips}>
-                    {data.sdgs.map(n=><span key={n} className={s.reviewChip}>SDG {n}</span>)}
-                  </div>
-                ) : <span className={s.reviewValue}>None selected</span>}
-              </div>
-            </div>
-            <div className={s.reviewRow}>
-              <span className={s.reviewLabel}>Focus Areas</span>
-              <div>
-                {data.focusAreas.length > 0 ? (
-                  <div className={s.reviewChips}>
-                    {data.focusAreas.map(f=><span key={f} className={s.reviewChip}>{f}</span>)}
-                  </div>
-                ) : <span className={s.reviewValue}>None selected</span>}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className={`${s.reviewSection} ${s.reviewFull}`}>
-          <div className={s.reviewSectionHeader}>
-            📎 Documents Attached
-            <button className={s.reviewEditBtn} onClick={()=>goTo(5)}>Edit</button>
-          </div>
-          <div className={s.reviewBody}>
-            {data.files.length > 0 ? (
-              <div style={{display:"flex",flexWrap:"wrap",gap:"0.5rem"}}>
-                {data.files.map((f:UploadedFile)=>(
-                  <span key={f.id} className={s.reviewChip}>📎 {f.name}</span>
-                ))}
-              </div>
-            ) : (
-              <span style={{fontSize:"0.82rem",color:"var(--text-muted)"}}>No documents attached</span>
-            )}
           </div>
         </div>
 
@@ -609,22 +451,74 @@ function Step6({ data, mode, goTo }: { data:FormData; mode:EventMode; goTo:(s:nu
 ══════════════════════════════════════════════════ */
 export default function AddEventPage() {
   const router = useRouter();
-  const [mode, setMode]       = useState<EventMode>("attended");
+  const [mode, setMode]       = useState<EventMode | null>(null);
   const [step, setStep]       = useState(1);
+  const [furthestStep, setFurthestStep] = useState(1);
   const [data, setData]       = useState<FormData>(INITIAL);
   const [submitted, setSubmitted] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
 
   const setField = (k:keyof FormData, v:unknown) => setData(p=>({...p,[k]:v}));
-  const goTo     = (n:number) => setStep(n);
-  const progress = ((step-1)/5)*100;
+  const lastStep = STEPS.length;
+  const eventType = getEventType(data);
+  const availableStep = mode && eventType ? lastStep : 1;
+  const stepTitle = useRef<HTMLHeadingElement>(null);
+  const goTo = (nextStep: number) => {
+    if (nextStep < 1 || nextStep > availableStep || nextStep === step) return;
+    setStep(nextStep);
+    setFurthestStep((current) => Math.max(current, nextStep));
+    requestAnimationFrame(() => stepTitle.current?.focus());
+  };
+  const progress = ((step - 1) / (lastStep - 1)) * 100;
+
+  const chooseMode = (nextMode: EventMode) => {
+    if (mode === nextMode) return;
+    setMode(nextMode);
+    setData((current) => ({
+      ...current,
+      facultyRole: nextMode === "conducted" ? "Coordinator" : "",
+      participationType: "",
+      certAvailable: false,
+      organizingResponsibility: "",
+      chiefGuest: "",
+      numParticipants: "",
+      targetAudience: "",
+      coordinators: "",
+    }));
+  };
+
+  const saveEvent = async () => {
+    if (!mode || saving) return;
+    setSaveError("");
+    setSaving(true);
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000"}/api/v1/staff/events`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...data, mode, eventType }),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { error?: { message?: string } } | null;
+        setSaveError(payload?.error?.message ?? "The event could not be saved.");
+        return;
+      }
+      setSubmitted(true);
+    } catch {
+      setSaveError("Unable to reach the event service. Try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const stepTitles: Record<number,{title:string;sub:string}> = {
-    1:{ title:"Basic Information",  sub:"Provide foundational details about the event." },
-    2:{ title:"Event Details",      sub:"Describe the event content, objectives and outcomes." },
-    3:{ title:"Participation",      sub:"Specify your role and level of involvement." },
-    4:{ title:"SDG & Focus Areas",  sub:"Align this event with institutional goals." },
-    5:{ title:"Supporting Documents", sub:"Upload certificates, approvals and evidence files." },
-    6:{ title:"Review & Submit",    sub:"Confirm all details before sending for approval." },
+    1:{ title:"Event Setup",        sub:"Choose how you were involved and what type of event it was." },
+    2:{ title:"Basic Information",  sub:"Enter the event name, organizer, date, and venue." },
+    3:{ title:"Event Details",      sub:"Describe the event content, objectives and outcomes." },
+    4:{ title:"Participation",      sub:"Specify your role and level of involvement." },
+    5:{ title:"SDG & Focus Areas",  sub:"Align this event with institutional goals." },
+    6:{ title:"Review & Save", sub:"Confirm the details before saving to My Events." },
   };
 
   return (
@@ -640,23 +534,6 @@ export default function AddEventPage() {
         </div>
         <div className={s.headerActions}>
           <button className={s.discardBtn} onClick={()=>router.push("/events")}>Discard</button>
-          <button className={s.draftBtn}><Ico.Save/> Save as Draft</button>
-        </div>
-      </div>
-
-      {/* Mode Segmented Control */}
-      <div className={s.segmentWrapper}>
-        <div className={s.segment}>
-          <button id="seg-attended" type="button"
-            className={`${s.segBtn} ${mode==="attended"?s.segBtnActive:""}`}
-            onClick={()=>{setMode("attended");setData(INITIAL);}}>
-            🎓 Attended Event
-          </button>
-          <button id="seg-conducted" type="button"
-            className={`${s.segBtn} ${mode==="conducted"?s.segBtnActive:""}`}
-            onClick={()=>{setMode("conducted");setData({...INITIAL,facultyRole:"Coordinator"});}}>
-            🎤 Conducted Event
-          </button>
         </div>
       </div>
 
@@ -676,6 +553,7 @@ export default function AddEventPage() {
                 <button type="button"
                   className={`${s.stepNavItem} ${step===st.num?s.stepNavItemActive:""}`}
                   onClick={()=>goTo(st.num)}
+                  disabled={st.num > Math.min(availableStep, furthestStep)}
                   aria-current={step===st.num?"step":undefined}>
                   <div className={`${s.stepCircle} ${step===st.num?s.stepCircleActive:""} ${step>st.num?s.stepCircleDone:""}`}>
                     {step>st.num ? <Ico.Check/> : st.num}
@@ -694,38 +572,76 @@ export default function AddEventPage() {
         {/* Step Content */}
         <div className={s.stepCard}>
           <div className={s.stepCardHeader}>
-            <h2 className={s.stepCardTitle}>{stepTitles[step].title}</h2>
+            <h2 className={s.stepCardTitle} ref={stepTitle} tabIndex={-1}>{stepTitles[step].title}</h2>
             <p className={s.stepCardSubtitle}>{stepTitles[step].sub}</p>
+            {step > 1 && mode && (
+              <p className={s.eventSelection}>
+                {mode === "attended" ? "Attended" : "Conducted"} · {eventType}
+              </p>
+            )}
           </div>
 
-          {step===1 && <Step1 data={data} set={setField}/>}
-          {step===2 && <Step2 data={data} set={setField} mode={mode}/>}
-          {step===3 && <Step3 data={data} set={setField} mode={mode}/>}
-          {step===4 && <Step4 data={data} set={setField}/>}
-          {step===5 && <Step5 data={data} set={setField}/>}
-          {step===6 && <Step6 data={data} mode={mode} goTo={goTo}/>}
+          {step === 1 && (
+            <div className={s.stepCardBody}>
+              <fieldset className={s.modeFieldset}>
+                <legend className={s.fieldLabel}>Event mode</legend>
+                <div className={s.choiceGrid}>
+                  {EVENT_MODES.map((option) => (
+                    <label className={s.modeChoice} key={option.value}>
+                      <input type="radio" name="event-mode" value={option.value} checked={mode === option.value} onChange={() => chooseMode(option.value)} required />
+                      <span><strong>{option.label}</strong><small>{option.description}</small></span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+              <div className={s.formGroup}>
+                <label className={s.fieldLabel} htmlFor="event-type">Event type</label>
+                <select id="event-type" className={s.fieldSelect} value={data.eventType} onChange={(event) => setField("eventType", event.target.value)} required>
+                  <option value="">Select an event type</option>
+                  {EVENT_TYPES.map((type) => <option key={type}>{type}</option>)}
+                </select>
+              </div>
+              {data.eventType === "Other" && (
+                <label className={s.formGroup}>
+                  <span className={s.fieldLabel}>Specify event type <span className={s.required}>*</span></span>
+                  <input
+                    type="text"
+                    className={s.fieldInput}
+                    value={data.customEventType}
+                    onChange={(event) => setField("customEventType", event.target.value)}
+                    placeholder="e.g. Panel discussion"
+                    required
+                  />
+                </label>
+              )}
+            </div>
+          )}
+          {step===2 && <Step1 data={data} set={setField}/>}
+          {step===3 && mode && <Step2 data={data} set={setField} mode={mode}/>}
+          {step===4 && mode && <Step3 data={data} set={setField} mode={mode}/>}
+          {step===5 && <Step4 data={data} set={setField}/>}
+          {step===lastStep && mode && <Step6 data={data} mode={mode} goTo={goTo}/>}
         </div>
       </div>
 
+      {saveError && <p className={s.saveError} role="alert">{saveError}</p>}
+
       {/* Bottom Navigation */}
       <div className={s.bottomNav}>
-        <div className={s.bottomLeft}>
-          <button type="button" className={s.navDraftBtn}><Ico.Save/> Save as Draft</button>
-        </div>
         <div className={s.bottomRight}>
           <button type="button" className={s.navBackBtn}
-            disabled={step===1} onClick={()=>setStep(p=>Math.max(1,p-1))}>
+            disabled={step===1} onClick={()=>goTo(step - 1)}>
             <Ico.Back/> Back
           </button>
-          {step < 6 ? (
+          {step < lastStep ? (
             <button id="continue-btn" type="button" className={s.navContinueBtn}
-              onClick={()=>setStep(p=>Math.min(6,p+1))}>
+              disabled={step >= availableStep} onClick={()=>goTo(step + 1)}>
               Continue <Ico.Arrow/>
             </button>
           ) : (
             <button id="submit-btn" type="button" className={s.navSubmitBtn}
-              onClick={()=>setSubmitted(true)}>
-              <Ico.Submit/> Submit for Approval
+              disabled={saving} onClick={() => void saveEvent()}>
+              <Ico.Submit/> {saving ? "Saving?" : "Save event"}
             </button>
           )}
         </div>
@@ -740,13 +656,12 @@ export default function AddEventPage() {
                 <polyline points="20 6 9 17 4 12"/>
               </svg>
             </div>
-            <div className={s.successTitle}>Event Submitted Successfully!</div>
+            <div className={s.successTitle}>Event saved</div>
             <p className={s.successSub}>
-              Your event <strong>&quot;{data.eventName || "record"}&quot;</strong> has been submitted for HOD approval.
-              You&apos;ll be notified once it&apos;s reviewed.
+              Your event <strong>&quot;{data.eventName || "record"}&quot;</strong> is available in My Events.
             </p>
             <div className={s.successBtns}>
-              <button className={s.draftBtn} onClick={()=>{setSubmitted(false);setData(INITIAL);setStep(1);}}>
+              <button className={s.addAnotherBtn} onClick={()=>{setSubmitted(false);setMode(null);setData(INITIAL);goTo(1);setFurthestStep(1);}}>
                 Add Another
               </button>
               <button className={s.navContinueBtn} onClick={()=>router.push("/events")}>

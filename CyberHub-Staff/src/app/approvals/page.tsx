@@ -1,20 +1,24 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import MainLayout from "@/components/MainLayout";
 import styles from "./approvals.module.css";
-import {
-  MOCK_ACHIEVEMENTS,
-  getAchievementsForRole,
-  ALL_CATEGORIES,
-  ALL_DEPARTMENTS,
-  ACADEMIC_YEARS,
-  type StudentAchievement,
-  type ReviewerRole,
-  type ApprovalStatus,
-  type AchievementCategory,
-  type Department,
-} from "@/lib/studentData";
+import type { ApprovalStatus } from "@/lib/studentData";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+
+interface ReviewRecord {
+  id: string;
+  title: string;
+  type: string;
+  description: string | null;
+  status: ApprovalStatus;
+  submittedAt: string | null;
+  createdAt: string;
+  student: { registerNo: string; department: string; user: { name: string } };
+  documents: { id: string; fileName: string; mimeType: string; sizeBytes: number; createdAt?: string }[];
+  approvals: { action: ApprovalStatus; comment?: string | null }[];
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -62,31 +66,48 @@ const PAGE_SIZE = 7;
 type Toast = { msg: string; type: "success" | "error" } | null;
 
 export default function ApprovalsPage() {
-  // Role switcher (demo only)
-  const [role, setRole] = useState<ReviewerRole>("FACULTY");
-
-  // Records state (mutable for approve/reject)
-  const [records, setRecords] = useState<StudentAchievement[]>(() =>
-    JSON.parse(JSON.stringify(MOCK_ACHIEVEMENTS)) as StudentAchievement[]
-  );
-
-  // Filters
-  const [search, setSearch]       = useState("");
-  const [catFilter, setCatFilter] = useState<AchievementCategory | "">("");
-  const [deptFilter, setDeptFilter] = useState<Department | "">("");
-  const [yearFilter, setYearFilter] = useState<string>("");
+  const [records, setRecords] = useState<ReviewRecord[]>([]);
+  const [search, setSearch] = useState("");
+  const [catFilter, setCatFilter] = useState("");
+  const [deptFilter, setDeptFilter] = useState("");
+  const [yearFilter, setYearFilter] = useState("");
   const [tabFilter, setTabFilter]   = useState<"ALL" | ApprovalStatus>("ALL");
 
   // Pagination
   const [page, setPage] = useState(1);
 
   // Panel / modals
-  const [panelRecord, setPanelRecord] = useState<StudentAchievement | null>(null);
-  const [approveTarget, setApproveTarget] = useState<StudentAchievement | null>(null);
-  const [rejectTarget,  setRejectTarget]  = useState<StudentAchievement | null>(null);
+  const [panelRecord, setPanelRecord] = useState<ReviewRecord | null>(null);
+  const [approveTarget, setApproveTarget] = useState<ReviewRecord | null>(null);
+  const [rejectTarget,  setRejectTarget]  = useState<ReviewRecord | null>(null);
   const [rejectReason, setRejectReason]   = useState("");
   const [rejectError,  setRejectError]    = useState(false);
-  const [loading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const loadRecords = useCallback(async (signal?: AbortSignal) => {
+    setLoading(true);
+    setLoadError("");
+    try {
+      const response = await fetch(`${API_URL}/api/v1/achievements`, { credentials: "include", signal });
+      if (!response.ok) throw new Error();
+      const payload = await response.json() as { data: ReviewRecord[] };
+      setRecords(payload.data);
+    } catch {
+      if (!signal?.aborted) setLoadError("Unable to load the review queue.");
+    } finally {
+      if (!signal?.aborted) setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void Promise.resolve().then(() => {
+      if (!controller.signal.aborted) return loadRecords(controller.signal);
+    });
+    return () => controller.abort();
+  }, [loadRecords]);
   const [toast, setToast] = useState<Toast>(null);
 
   const showToast = (msg: string, type: "success" | "error" = "success") => {
@@ -94,33 +115,30 @@ export default function ApprovalsPage() {
     window.setTimeout(() => setToast(null), 3500);
   };
 
-  // Role-scoped base list
-  const roleRecords = useMemo(
-    () => getAchievementsForRole(role, "f1", "CSE")
-      .map((r) => records.find((x) => x.id === r.id) ?? r),
-    [role, records]
-  );
+  const categories = [...new Set(records.map((record) => record.type))].sort();
+  const departments = [...new Set(records.map((record) => record.student.department))].sort();
+  const years = [...new Set(records.map((record) => (record.submittedAt ?? record.createdAt).slice(0, 4)))].sort().reverse();
 
   // Stats (computed from role-scoped, NOT filtered)
   const stats = useMemo(() => ({
-    total:   roleRecords.length,
-    pending: roleRecords.filter((r) => r.status === "SUBMITTED").length,
-    approved: roleRecords.filter((r) => r.status === "APPROVED").length,
-    rejected: roleRecords.filter((r) => r.status === "REJECTED").length,
-  }), [roleRecords]);
+    total:   records.length,
+    pending: records.filter((r) => r.status === "SUBMITTED").length,
+    approved: records.filter((r) => r.status === "APPROVED").length,
+    rejected: records.filter((r) => r.status === "REJECTED").length,
+  }), [records]);
 
   // Filtered
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
-    return roleRecords.filter((r) => {
-      const matchSearch = !q || r.student.name.toLowerCase().includes(q) || r.student.registerNumber.toLowerCase().includes(q);
-      const matchCat  = !catFilter  || r.category   === catFilter;
+    return records.filter((r) => {
+      const matchSearch = !q || r.student.user.name.toLowerCase().includes(q) || r.student.registerNo.toLowerCase().includes(q);
+      const matchCat  = !catFilter  || r.type   === catFilter;
       const matchDept = !deptFilter || r.student.department === deptFilter;
-      const matchYear = !yearFilter || r.academicYear === yearFilter;
+      const matchYear = !yearFilter || (r.submittedAt ?? r.createdAt).slice(0, 4) === yearFilter;
       const matchTab  = tabFilter === "ALL" || r.status === tabFilter;
       return matchSearch && matchCat && matchDept && matchYear && matchTab;
     });
-  }, [roleRecords, search, catFilter, deptFilter, yearFilter, tabFilter]);
+  }, [records, search, catFilter, deptFilter, yearFilter, tabFilter]);
 
   // Pagination
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
@@ -132,39 +150,38 @@ export default function ApprovalsPage() {
 
   const handleTabChange = (t: "ALL" | ApprovalStatus) => { setTabFilter(t); setPage(1); };
 
-  // Approve action
-  const confirmApprove = () => {
-    if (!approveTarget) return;
-    setRecords((prev) =>
-      prev.map((r) => r.id === approveTarget.id ? { ...r, status: "APPROVED" as ApprovalStatus } : r)
-    );
-    if (panelRecord?.id === approveTarget.id) setPanelRecord((p) => p ? { ...p, status: "APPROVED" } : p);
-    showToast(`"${approveTarget.title}" approved successfully.`);
-    setApproveTarget(null);
+  const submitDecision = async (target: ReviewRecord, action: "APPROVED" | "REJECTED", comment?: string) => {
+    setSaving(true);
+    try {
+      const response = await fetch(`${API_URL}/api/v1/achievements/${target.id}/review`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, comment }),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { error?: { message?: string } } | null;
+        showToast(payload?.error?.message ?? "Unable to save the review.", "error");
+        return;
+      }
+      const updated = { ...target, status: action, approvals: [{ action, comment }] };
+      setRecords((current) => current.map((record) => record.id === target.id ? updated : record));
+      setPanelRecord((current) => current?.id === target.id ? updated : current);
+      setPage(1);
+      setApproveTarget(null);
+      setRejectTarget(null);
+      showToast(action === "APPROVED" ? "Submission approved." : "Submission rejected.");
+    } catch {
+      showToast("Unable to reach the review service. Try again.", "error");
+    } finally {
+      setSaving(false);
+    }
   };
 
-  // Reject action
-  const confirmReject = () => {
-    if (!rejectTarget) return;
-    if (!rejectReason.trim()) { setRejectError(true); return; }
-    setRecords((prev) =>
-      prev.map((r) => r.id === rejectTarget.id
-        ? { ...r, status: "REJECTED" as ApprovalStatus, rejectionReason: rejectReason.trim() }
-        : r)
-    );
-    if (panelRecord?.id === rejectTarget.id) setPanelRecord((p) => p ? { ...p, status: "REJECTED", rejectionReason: rejectReason.trim() } : p);
-    showToast(`"${rejectTarget.title}" rejected.`, "error");
-    setRejectTarget(null);
+  const openRejectModal = (record: ReviewRecord) => {
+    setRejectTarget(record);
     setRejectReason("");
     setRejectError(false);
-  };
-
-  const openRejectModal = (r: StudentAchievement) => { setRejectTarget(r); setRejectReason(""); setRejectError(false); };
-
-  const roleLabel: Record<ReviewerRole, string> = {
-    FACULTY: "My Assigned Students",
-    HOD: "Department Student Records (CSE)",
-    ADMIN: "All Student Records",
   };
 
   return (
@@ -178,18 +195,9 @@ export default function ApprovalsPage() {
       </div>
 
       {/* Demo Role Switcher */}
-      <div className={styles.roleSwitcher}>
-        <span className={styles.roleSwitcherLabel}>
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-          DEMO ROLE PREVIEW — not real authorization
-        </span>
-        {(["FACULTY", "HOD", "ADMIN"] as ReviewerRole[]).map((r) => (
-          <button key={r} className={`${styles.roleBtn} ${role === r ? styles.activeRole : ""}`} onClick={() => { setRole(r); setPage(1); }}>
-            {r === "FACULTY" ? "👨‍🏫 Faculty" : r === "HOD" ? "🏫 HOD" : "🛡️ Admin"}
-          </button>
-        ))}
-        <span style={{ fontSize: "0.75rem", color: "#78350f", marginLeft: "auto" }}>{roleLabel[role]}</span>
-      </div>
+      {loadError && (
+        <p role="alert">{loadError} <button type="button" onClick={() => void loadRecords()}>Retry</button></p>
+      )}
 
       {/* Stats */}
       <div className={styles.statsGrid}>
@@ -248,17 +256,17 @@ export default function ApprovalsPage() {
             </span>
             <input className={styles.searchInput} placeholder="Search student name or reg. no…" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
           </div>
-          <select className={styles.filterSelect} value={catFilter} onChange={(e) => { setCatFilter(e.target.value as AchievementCategory | ""); setPage(1); }}>
+          <select className={styles.filterSelect} value={catFilter} onChange={(e) => { setCatFilter(e.target.value); setPage(1); }}>
             <option value="">All Categories</option>
-            {ALL_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+            {categories.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
-          <select className={styles.filterSelect} value={deptFilter} onChange={(e) => { setDeptFilter(e.target.value as Department | ""); setPage(1); }}>
+          <select className={styles.filterSelect} value={deptFilter} onChange={(e) => { setDeptFilter(e.target.value); setPage(1); }}>
             <option value="">All Depts</option>
-            {ALL_DEPARTMENTS.map((d) => <option key={d} value={d}>{d}</option>)}
+            {departments.map((d) => <option key={d} value={d}>{d}</option>)}
           </select>
           <select className={styles.filterSelect} value={yearFilter} onChange={(e) => { setYearFilter(e.target.value); setPage(1); }}>
-            <option value="">All Years</option>
-            {ACADEMIC_YEARS.map((y) => <option key={y} value={y}>{y}</option>)}
+            <option value="">All Submission Years</option>
+            {years.map((y) => <option key={y} value={y}>{y}</option>)}
           </select>
           <button className={styles.resetBtn} onClick={resetFilters}>Reset</button>
         </div>
@@ -297,17 +305,17 @@ export default function ApprovalsPage() {
                     <tr key={r.id}>
                       <td>
                         <div className={styles.studentCell}>
-                          <div className={styles.studentAvatar}>{initials(r.student.name)}</div>
+                          <div className={styles.studentAvatar}>{initials(r.student.user.name)}</div>
                           <div>
-                            <div className={styles.studentName}>{r.student.name}</div>
-                            <div className={styles.studentReg}>{r.student.registerNumber}</div>
+                            <div className={styles.studentName}>{r.student.user.name}</div>
+                            <div className={styles.studentReg}>{r.student.registerNo}</div>
                           </div>
                         </div>
                       </td>
                       <td>{r.student.department}</td>
                       <td><div className={styles.achievementName}>{r.title}</div></td>
-                      <td><span className={styles.catBadge}>{r.category}</span></td>
-                      <td><span className={styles.dateCell}>{fmtDate(r.submittedDate)}</span></td>
+                      <td><span className={styles.catBadge}>{r.type}</span></td>
+                      <td><span className={styles.dateCell}>{fmtDate((r.submittedAt ?? r.createdAt))}</span></td>
                       <td><StatusBadge status={r.status} /></td>
                       <td>
                         <div className={styles.actionCell}>
@@ -368,11 +376,9 @@ export default function ApprovalsPage() {
               <div className={styles.panelSection}>
                 <div className={styles.panelSectionTitle}>Student Information</div>
                 <div className={styles.infoGrid}>
-                  <div className={styles.infoItem}><div className={styles.infoLabel}>Full Name</div><div className={styles.infoValue}>{panelRecord.student.name}</div></div>
-                  <div className={styles.infoItem}><div className={styles.infoLabel}>Reg. Number</div><div className={styles.infoValue}>{panelRecord.student.registerNumber}</div></div>
+                  <div className={styles.infoItem}><div className={styles.infoLabel}>Full Name</div><div className={styles.infoValue}>{panelRecord.student.user.name}</div></div>
+                  <div className={styles.infoItem}><div className={styles.infoLabel}>Reg. Number</div><div className={styles.infoValue}>{panelRecord.student.registerNo}</div></div>
                   <div className={styles.infoItem}><div className={styles.infoLabel}>Department</div><div className={styles.infoValue}>{panelRecord.student.department}</div></div>
-                  <div className={styles.infoItem}><div className={styles.infoLabel}>Year / Section</div><div className={styles.infoValue}>Year {panelRecord.student.year} – Sec {panelRecord.student.section}</div></div>
-                  <div className={styles.infoItem}><div className={styles.infoLabel}>Email</div><div className={styles.infoValue}>{panelRecord.student.email}</div></div>
                   <div className={styles.infoItem}><div className={styles.infoLabel}>Status</div><div className={styles.infoValue}><StatusBadge status={panelRecord.status} /></div></div>
                 </div>
               </div>
@@ -385,21 +391,16 @@ export default function ApprovalsPage() {
                     <div className={styles.infoLabel}>Title</div>
                     <div className={styles.infoValue}>{panelRecord.title}</div>
                   </div>
-                  <div className={styles.infoItem}><div className={styles.infoLabel}>Category</div><div className={styles.infoValue}><span className={styles.catBadge}>{panelRecord.category}</span></div></div>
-                  <div className={styles.infoItem}><div className={styles.infoLabel}>Participation</div><div className={styles.infoValue}>{panelRecord.participationType}</div></div>
-                  <div className={styles.infoItem}><div className={styles.infoLabel}>Organizer</div><div className={styles.infoValue}>{panelRecord.organizer}</div></div>
-                  <div className={styles.infoItem}><div className={styles.infoLabel}>Academic Year</div><div className={styles.infoValue}>{panelRecord.academicYear}</div></div>
-                  <div className={styles.infoItem}><div className={styles.infoLabel}>Event Start</div><div className={styles.infoValue}>{fmtDate(panelRecord.eventStartDate)}</div></div>
-                  <div className={styles.infoItem}><div className={styles.infoLabel}>Event End</div><div className={styles.infoValue}>{fmtDate(panelRecord.eventEndDate)}</div></div>
-                  <div className={styles.infoItem}><div className={styles.infoLabel}>Submitted</div><div className={styles.infoValue}>{fmtDate(panelRecord.submittedDate)}</div></div>
+                  <div className={styles.infoItem}><div className={styles.infoLabel}>Category</div><div className={styles.infoValue}><span className={styles.catBadge}>{panelRecord.type}</span></div></div>
+                  <div className={styles.infoItem}><div className={styles.infoLabel}>Submitted</div><div className={styles.infoValue}>{fmtDate(panelRecord.submittedAt ?? panelRecord.createdAt)}</div></div>
                   <div className={`${styles.infoItem} ${styles.infoValueFull}`} style={{ gridColumn: "1 / -1" }}>
                     <div className={styles.infoLabel}>Description</div>
                     <div className={styles.infoValue}>{panelRecord.description}</div>
                   </div>
-                  {panelRecord.rejectionReason && (
+                  {panelRecord.status === "REJECTED" && panelRecord.approvals[0]?.comment && (
                     <div className={`${styles.infoItem} ${styles.infoValueFull}`} style={{ gridColumn: "1 / -1" }}>
                       <div className={styles.infoLabel} style={{ color: "#dc2626" }}>Rejection Reason</div>
-                      <div className={styles.infoValue} style={{ color: "#dc2626", background: "#fff1f2", padding: "0.5rem 0.7rem", borderRadius: "6px" }}>{panelRecord.rejectionReason}</div>
+                      <div className={styles.infoValue} style={{ color: "#dc2626", background: "#fff1f2", padding: "0.5rem 0.7rem", borderRadius: "6px" }}>{panelRecord.approvals[0]?.comment}</div>
                     </div>
                   )}
                 </div>
@@ -416,17 +417,14 @@ export default function ApprovalsPage() {
                 ) : (
                   panelRecord.documents.map((doc) => (
                     <div key={doc.id} className={styles.docItem}>
-                      <div className={`${styles.docIcon} ${doc.fileType === "PDF" ? styles.docIconPDF : styles.docIconIMG}`}>
-                        {doc.fileType}
+                      <div className={`${styles.docIcon} ${doc.mimeType === "application/pdf" ? styles.docIconPDF : styles.docIconIMG}`}>
+                        {doc.mimeType === "application/pdf" ? "PDF" : "FILE"}
                       </div>
                       <div className={styles.docInfo}>
                         <div className={styles.docName}>{doc.fileName}</div>
-                        <div className={styles.docMeta}>{doc.fileType} · {doc.fileSize} · Uploaded {fmtDate(doc.uploadedAt)}</div>
+                        <div className={styles.docMeta}>{doc.mimeType === "application/pdf" ? "PDF" : "FILE"} · {Math.ceil(doc.sizeBytes / 1024)} KB · Uploaded {doc.createdAt ? fmtDate(doc.createdAt) : "Unknown date"}</div>
                       </div>
-                      <button className={styles.docDownload} title="Download (mock – no real file)" onClick={() => alert("Mock file: no actual download available in this demo.")}>
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                        Download
-                      </button>
+
                     </div>
                   ))
                 )}
@@ -466,15 +464,14 @@ export default function ApprovalsPage() {
             </div>
             <div className={styles.modalBody}>
               <div className={styles.modalInfo}>
-                <strong>{approveTarget.student.name}</strong> ({approveTarget.student.registerNumber})<br />
+                <strong>{approveTarget.student.user.name}</strong> ({approveTarget.student.registerNo})<br />
                 Achievement: <strong>{approveTarget.title}</strong><br />
-                Category: {approveTarget.category}
+                Category: {approveTarget.type}
               </div>
-              <p className={styles.modalNote}>This action updates the frontend state only. It is not saved to the backend in this demo.</p>
             </div>
             <div className={styles.modalFooter}>
               <button className={styles.btnSecondary} onClick={() => setApproveTarget(null)}>Cancel</button>
-              <button className={styles.btnConfirmApprove} onClick={confirmApprove}>Confirm Approval</button>
+              <button className={styles.btnConfirmApprove} disabled={saving} onClick={() => void submitDecision(approveTarget, "APPROVED")}>Confirm Approval</button>
             </div>
           </div>
         </div>
@@ -490,7 +487,7 @@ export default function ApprovalsPage() {
             </div>
             <div className={styles.modalBody}>
               <div className={styles.modalInfo}>
-                <strong>{rejectTarget.student.name}</strong> ({rejectTarget.student.registerNumber})<br />
+                <strong>{rejectTarget.student.user.name}</strong> ({rejectTarget.student.registerNo})<br />
                 Achievement: <strong>{rejectTarget.title}</strong>
               </div>
               <div className={styles.formGroup}>
@@ -498,17 +495,20 @@ export default function ApprovalsPage() {
                 <textarea
                   id="rejectReason"
                   className={`${styles.formControl} ${rejectError ? styles.fieldError : ""}`}
-                  placeholder="Provide a clear reason for rejection so the student can resubmit…"
+                  placeholder="Provide a clear reason for rejection for the student…"
                   value={rejectReason}
                   onChange={(e) => { setRejectReason(e.target.value); if (e.target.value.trim()) setRejectError(false); }}
                 />
                 {rejectError && <span className={styles.fieldErrorMsg}>Please enter a rejection reason.</span>}
               </div>
-              <p className={styles.modalNote}>This action updates the frontend state only. It is not saved to the backend in this demo.</p>
             </div>
             <div className={styles.modalFooter}>
               <button className={styles.btnSecondary} onClick={() => setRejectTarget(null)}>Cancel</button>
-              <button className={styles.btnConfirmReject} onClick={confirmReject}>Reject Submission</button>
+              <button className={styles.btnConfirmReject} disabled={saving} onClick={() => {
+                const reason = rejectReason.trim();
+                if (!reason) { setRejectError(true); return; }
+                void submitDecision(rejectTarget, "REJECTED", reason);
+              }}>Reject Submission</button>
             </div>
           </div>
         </div>
@@ -516,7 +516,7 @@ export default function ApprovalsPage() {
 
       {/* ── Toast ── */}
       {toast && (
-        <div className={`${styles.toast} ${toast.type === "success" ? styles.toastSuccess : styles.toastError}`}>
+        <div role="status" className={`${styles.toast} ${toast.type === "success" ? styles.toastSuccess : styles.toastError}`}>
           {toast.type === "success"
             ? <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
             : <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>

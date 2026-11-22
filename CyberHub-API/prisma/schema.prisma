@@ -55,10 +55,26 @@ model User {
   staffProfile StaffProfile?
   achievements Achievement[] @relation("AchievementSubmitter")
   reviews      ApprovalAction[]
+  facultyEvents FacultyEvent[]
 
   @@index([role])
   @@index([active])
   @@index([departmentId])
+}
+
+model FacultyEvent {
+  id          String   @id @default(uuid())
+  ownerId     String
+  owner       User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  mode        String
+  name        String
+  category    String
+  eventDate   DateTime @db.Date
+  facultyRole String
+  details     Json
+  createdAt   DateTime @default(now())
+
+  @@index([ownerId, eventDate])
 }
 
 model Department {

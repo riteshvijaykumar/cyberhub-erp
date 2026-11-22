@@ -14,8 +14,7 @@ while the domain model and backend are being established:
 
 The parent workspace provides common commands and local infrastructure. The
 frontends remain independently installable applications during this transition,
-so their separate lockfiles and Git histories are preserved. The frontends do
-not contain production authentication or persistent data yet.
+so their separate lockfiles and Git histories are preserved. Both portals use the shared API for session validation and persisted records.
 
 ## Requirements
 
@@ -105,70 +104,51 @@ npm run build:staff
 npm run build:api
 ```
 
-## Phase 1 boundaries
+## Authentication and workflow scope
 
-The API now provides the initial authentication boundary. The ERP domain
-modules, authorization policies, migrations, password recovery, email delivery,
-and production observability still need to be implemented before public launch.
-Never use demo credentials or development secrets in a public deployment.
+The staff portal at `http://localhost:3001/login` signs in both roles. Students
+are sent to the student portal at `http://localhost:3000`. Faculty, HODs, and
+administrators use the staff portal. Both portals validate roles on protected
+requests. The API enforces student ownership, department-level review scope
+for faculty and HODs, and cross-department review for administrators. A
+faculty-to-student assignment model is not part of the schema.
 
-## UAT vertical slice
+The student portal provides thirteen achievement workspaces, a dashboard, and
+a personal profile. Faculty can review submitted achievements, browse the
+permitted student directory, and log attended or conducted events. A decision
+recorded in Staff Approvals appears in the student's activity and dashboard.
+My Events lists only records owned by the signed-in staff member.
 
-The current UAT slice is:
+PostgreSQL-backed accounts persist profiles, sessions, achievements, review
+history, and events. Demo accounts use a separate in-memory store and are
+disabled when `NODE_ENV=production`. Run `npm run db:generate` and
+`npm run db:push` for a development database to apply the additive
+`FacultyEvent` table. Keep PostgreSQL configured for deployment. Redis is
+defined in Compose and is currently unused by the application.
 
-```text
-Student login
-  -> Projects & Funding
-  -> Add New
-  -> Submit project
-  -> Staff Approvals
-  -> Approve or reject
-```
+When running the portals and API on different internal addresses, set
+`API_INTERNAL_URL` in both portals for server-side requests and
+`NEXT_PUBLIC_API_URL` for browser requests. Configure `WEB_ORIGINS`, the
+portal URLs, and HTTPS. The session cookie is host-only, so both portals
+and the browser-facing API must share a hostname for the cookie to reach
+each portal's server-side session check.
 
-The student portal runs on `http://localhost:3000`, the staff portal runs on
-`http://localhost:3001`, and the API runs on `http://localhost:4000`.
+## API routes
 
-Authentication is centralized at the staff portal's `/login` page. Student
-and staff credentials are checked by the API, then students are sent to the
-student portal and faculty, HOD, and administrator accounts are sent to the
-staff portal. The session cookie is shared across both local portal ports.
+| Area | Routes |
+| --- | --- |
+| Health | `GET /health`, `GET /health/ready` |
+| Session | `POST /api/v1/auth/login`, `GET /api/v1/auth/me`, `POST /api/v1/auth/logout` |
+| Own profile | `GET /api/v1/profile`, `PATCH /api/v1/profile` |
+| Achievements | `GET /api/v1/achievements`, `POST /api/v1/achievements`, `PATCH /api/v1/achievements/:id` |
+| Review | `PATCH /api/v1/achievements/:id/review` |
+| Dashboard | `GET /api/v1/student/summary` |
+| Staff records | `GET /api/v1/staff/students`, `GET /api/v1/staff/events`, `POST /api/v1/staff/events` |
 
-The student portal activity workspaces are database-backed. Projects,
-internships, certificates, competitions, publications, patents, research,
-workshops, conferences, volunteering, hackathons, leadership, and awards all
-use the shared achievement API. Drafts, submissions, approvals, and rejections
-are scoped to the authenticated student, and the dashboard counters are
-calculated from persisted records rather than sample data.
+Student evidence upload/download, faculty event approval, password recovery,
+email notifications, and academic administration modules such as attendance,
+subjects, timetable, assignments, marks, and reports are outside the current
+implemented workflows. The achievement schema can display stored document
+metadata.
 
-The shared activity endpoints are:
-
-```text
-GET   /api/v1/achievements
-POST  /api/v1/achievements
-PATCH /api/v1/achievements/:id
-GET   /api/v1/student/summary
-```
-
-## Profile and authorization foundation
-
-The API now also exposes:
-
-```text
-GET /api/v1/profile
-```
-
-The schema includes departments, student profiles, staff profiles, and
-department links. Faculty, HOD, and administrator review permissions are
-enforced server-side. Administrators can review across departments; department
-scoped reviewers can review only submissions from their department.
-
-Authenticated profile endpoints:
-
-```text
-GET   /api/v1/profile
-PATCH /api/v1/profile
-```
-
-Students can update their own name, email, and phone details. Institutional
-identity fields such as register number, department, programme, batch, and
-semester remain controlled by the ERP data layer.
+Run the API integration tests with `npm --prefix CyberHub-API test`.

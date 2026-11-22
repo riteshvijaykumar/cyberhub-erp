@@ -11,3 +11,8 @@
   overflow-x: hidden;
   background: #F4F7FA;
 }
+
+@media (max-width: 760px) {
+  .shell { flex-direction: column; }
+  .main { margin-left: 0; min-width: 0; }
+}

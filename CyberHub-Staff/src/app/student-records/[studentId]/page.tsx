@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import MainLayout from "@/components/MainLayout";
-import { getAssignedStudents, MOCK_ACHIEVEMENTS, type ApprovalStatus } from "@/lib/studentData";
+import type { ApprovalStatus } from "@/lib/studentData";
+import { getStaffDirectory } from "@/lib/staffDirectory";
 import styles from "../page.module.css";
 
 const dateFormat = new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeZone: "UTC" });
@@ -18,10 +19,12 @@ function formatDate(date: string) {
 
 export default async function StudentProfilePage({ params }: { params: Promise<{ studentId: string }> }) {
   const { studentId } = await params;
-  const student = getAssignedStudents().find((entry) => entry.id === studentId);
+  const directory = await getStaffDirectory();
+  if (!directory) return <MainLayout><p role="alert">Student records could not be loaded. <Link href="/student-records">Return to student records</Link></p></MainLayout>;
+  const student = directory.find((entry) => entry.id === studentId);
   if (!student) notFound();
 
-  const submissions = MOCK_ACHIEVEMENTS.filter((record) => record.studentId === student.id);
+  const submissions = student.achievements;
   const fileCount = submissions.reduce((total, record) => total + record.documents.length, 0);
 
   return (
@@ -29,19 +32,19 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
       breadcrumbs={[
         { label: "Dashboard", href: "/dashboard" },
         { label: "Student Records", href: "/student-records" },
-        { label: student.name },
+        { label: student.user.name },
       ]}
       userName="Staff"
     >
       <div className={styles.workspace}>
-        <Link href="/student-records" className={styles.backLink}>← Back to assigned students</Link>
+        <Link href="/student-records" className={styles.backLink}>← Back to student records</Link>
         <header className={styles.profileHeader}>
           <span className={`${styles.avatar} ${styles.profileAvatar}`} aria-hidden="true">
-            {student.name.split(" ").map((part) => part[0]).slice(0, 2).join("")}
+            {student.user.name.split(" ").map((part) => part[0]).slice(0, 2).join("")}
           </span>
           <div>
-            <h1>{student.name}</h1>
-            <p>{student.registerNumber} · {student.department} · Year {student.year}, Section {student.section}</p>
+            <h1>{student.user.name}</h1>
+            <p>{student.registerNo} · {student.department} · Semester {student.semester}</p>
           </div>
         </header>
 
@@ -49,11 +52,12 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
           <section className={`${styles.card} ${styles.profileSection} ${styles.studentDetails}`} aria-labelledby="student-details">
             <h2 id="student-details">Student details</h2>
             <dl className={styles.profileInfo}>
-              <div><dt>Register number</dt><dd>{student.registerNumber}</dd></div>
+              <div><dt>Register number</dt><dd>{student.registerNo}</dd></div>
               <div><dt>Department</dt><dd>{student.department}</dd></div>
-              <div><dt>Year</dt><dd>{student.year}</dd></div>
-              <div><dt>Section</dt><dd>{student.section}</dd></div>
-              <div><dt>Email</dt><dd>{student.email}</dd></div>
+              <div><dt>Semester</dt><dd>{student.semester}</dd></div>
+              <div><dt>Programme</dt><dd>{student.programme}</dd></div>
+              <div><dt>Batch</dt><dd>{student.batch}</dd></div>
+              <div><dt>Email</dt><dd>{student.user.email ?? "?"}</dd></div>
             </dl>
           </section>
 
@@ -65,19 +69,17 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
               <article key={record.id} className={styles.submission}>
                 <header className={styles.submissionHeader}>
                   <div>
-                    <p className={styles.category}>{record.category}</p>
+                    <p className={styles.category}>{record.type.toLowerCase()}</p>
                     <h3>{record.title}</h3>
                   </div>
                   <span className={styles.status} data-status={record.status}>{statusLabels[record.status]}</span>
                 </header>
                 <p className={styles.description}>{record.description}</p>
                 <dl className={styles.profileInfo}>
-                  <div><dt>Organizer</dt><dd>{record.organizer}</dd></div>
-                  <div><dt>Participation</dt><dd>{record.participationType}</dd></div>
-                  <div><dt>Academic year</dt><dd>{record.academicYear}</dd></div>
-                  <div><dt>Event dates</dt><dd>{formatDate(record.eventStartDate)} – {formatDate(record.eventEndDate)}</dd></div>
-                  {record.status !== "DRAFT" && <div><dt>Submitted</dt><dd>{formatDate(record.submittedDate)}</dd></div>}
-                  {record.rejectionReason && <div><dt>Rejection reason</dt><dd>{record.rejectionReason}</dd></div>}
+                  <div><dt>Submitted</dt><dd>{formatDate(record.submittedAt ?? record.createdAt)}</dd></div>
+                  {record.status === "REJECTED" && record.approvals[0]?.comment && (
+                    <div><dt>Rejection reason</dt><dd>{record.approvals[0].comment}</dd></div>
+                  )}
                 </dl>
                 <div className={styles.attachments}>
                   <h4>Uploaded files</h4>
@@ -85,14 +87,14 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
                   {record.documents.map((document) => (
                     <details key={document.id} className={styles.file}>
                       <summary>
-                        <span className={styles.fileType} aria-hidden="true">{document.fileType}</span>
+                        <span className={styles.fileType} aria-hidden="true">{document.mimeType === "application/pdf" ? "PDF" : "FILE"}</span>
                         <span className={styles.fileName}>{document.fileName}</span>
-                        <span className={styles.fileSize}>{document.fileSize}</span>
+                        <span className={styles.fileSize}>{Math.ceil(document.sizeBytes / 1024)} KB</span>
                       </summary>
                       <dl className={styles.profileInfo}>
-                        <div><dt>Type</dt><dd>{document.fileType}</dd></div>
-                        <div><dt>Size</dt><dd>{document.fileSize}</dd></div>
-                        <div><dt>Uploaded</dt><dd>{formatDate(document.uploadedAt)}</dd></div>
+                        <div><dt>Type</dt><dd>{document.mimeType === "application/pdf" ? "PDF" : "FILE"}</dd></div>
+                        <div><dt>Size</dt><dd>{Math.ceil(document.sizeBytes / 1024)} KB</dd></div>
+                        <div><dt>Uploaded</dt><dd>{document.createdAt ? formatDate(document.createdAt) : "?"}</dd></div>
                       </dl>
                     </details>
                   ))}

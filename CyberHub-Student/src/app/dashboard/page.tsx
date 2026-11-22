@@ -23,6 +23,7 @@ const modules = [
 
 export default function DashboardPage() {
   const [summary, setSummary] = useState<{ total: number; draft: number; submitted: number; approved: number; rejected: number } | null>(null);
+  const [summaryFailed, setSummaryFailed] = useState(false);
   const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
   useEffect(() => {
@@ -30,7 +31,7 @@ export default function DashboardPage() {
       void fetch(`${API_URL}/api/v1/student/summary`, { credentials: "include" })
         .then((response) => response.ok ? response.json() as Promise<{ data: { counts: typeof summary } }> : Promise.reject(new Error("Unable to load summary.")))
         .then((payload) => setSummary(payload.data.counts))
-        .catch(() => setSummary(null));
+        .catch(() => setSummaryFailed(true));
     }, 0);
     return () => window.clearTimeout(timer);
   }, [API_URL]);
@@ -38,7 +39,7 @@ export default function DashboardPage() {
   return (
     <DashboardLayout>
       <Header title="Dashboard" subtitle="Your academic achievement workspace" />
-      <div style={{ padding: "28px 32px 48px" }}>
+      <div style={{ padding: "24px var(--page-gutter) 3rem" }}>
         <section style={{ padding: "24px", borderRadius: "16px", background: "linear-gradient(135deg,#0d1f3c,#173b68)", color: "#fff" }}>
           <p style={{ margin: "0 0 7px", color: "#29b5d5", fontSize: ".7rem", fontWeight: 800, letterSpacing: ".12em", textTransform: "uppercase" }}>CyberHub student ERP</p>
           <h2 style={{ margin: 0, fontSize: "1.5rem", letterSpacing: "-.03em" }}>Build a complete record of your growth.</h2>
@@ -48,6 +49,7 @@ export default function DashboardPage() {
         </section>
 
         <div role="status">
+          {summaryFailed && <p style={{ marginTop: "1rem", color: "#9f1239" }}>Student activity totals could not be loaded. Refresh to try again.</p>}
           {summary && summary.rejected > 0 && (
             <p style={{ margin: "18px 0 0", padding: "12px 16px", borderRadius: "8px", background: "#fff1f2", color: "#9f1239" }}>
               {summary.rejected === 1
@@ -83,7 +85,7 @@ export default function DashboardPage() {
 
         <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(210px,1fr))", gap: "14px" }}>
           {modules.map((module) => (
-            <Link key={module.href} href={module.href} style={{ display: "block", padding: "18px", background: "#fff", border: "1px solid #e8eef4", borderRadius: "13px", color: "#0d1f3c", textDecoration: "none", boxShadow: "0 1px 4px rgba(13,31,60,.04)" }}>
+            <Link key={module.href} href={module.href} prefetch={false} style={{ display: "block", padding: "18px", background: "#fff", border: "1px solid #e8eef4", borderRadius: "13px", color: "#0d1f3c", textDecoration: "none", boxShadow: "0 1px 4px rgba(13,31,60,.04)" }}>
               <span style={{ display: "grid", placeItems: "center", width: "34px", height: "34px", marginBottom: "15px", borderRadius: "10px", background: module.color, color: "#0d9ebb", fontWeight: 800 }}>+</span>
               <strong style={{ display: "block", fontSize: ".92rem" }}>{module.title}</strong>
               <span style={{ display: "block", marginTop: "6px", color: "#64748b", fontSize: ".76rem", lineHeight: 1.45 }}>{module.description}</span>

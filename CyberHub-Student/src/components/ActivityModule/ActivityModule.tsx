@@ -54,13 +54,16 @@ export default function ActivityModule({
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"All" | ActivityRecord["status"]>("All");
   const [formOpen, setFormOpen] = useState(false);
-  const [submitMode, setSubmitMode] = useState<"Draft" | "Submitted">("Draft");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [values, setValues] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const loadRecords = useCallback(async () => {
+    setLoading(true);
+    setLoadError(false);
     try {
       const response = await fetch(`${API_URL}/api/v1/achievements`, { credentials: "include" });
       if (!response.ok) throw new Error("Unable to load records.");
@@ -75,7 +78,7 @@ export default function ActivityModule({
           rejectionReason: record.approvals?.find((approval) => approval.action === "REJECTED")?.comment?.trim(),
         })));
     } catch {
-      setError("Sign in to load your records. Your saved data is stored in the ERP database.");
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -99,8 +102,7 @@ export default function ActivityModule({
     });
   }, [records, search, statusFilter]);
 
-  const openForm = (mode: "Draft" | "Submitted") => {
-    setSubmitMode(mode);
+  const openForm = () => {
     setEditingId(null);
     setValues({});
     setError("");
@@ -121,7 +123,10 @@ export default function ActivityModule({
       .map(([key, value]) => `${fields.find((field) => field.key === key)?.label ?? key}: ${value}`)
       .filter(Boolean)
       .join("\n");
-    const response = await fetch(
+    setError("");
+    setSaving(true);
+    try {
+      const response = await fetch(
       `${API_URL}/api/v1/achievements${editingId !== null ? `/${editingId}` : ""}`,
       {
         method: editingId !== null ? "PATCH" : "POST",
@@ -131,20 +136,25 @@ export default function ActivityModule({
           type: activityType,
           title,
           description,
-          status: submitMode === "Draft" ? "DRAFT" : "SUBMITTED",
+          status: "SUBMITTED",
           values,
         }),
       },
-    );
-    if (!response.ok) {
-      setError("Unable to save this record. Please try again.");
-      return;
+      );
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { error?: { message?: string } } | null;
+        setError(payload?.error?.message ?? "Unable to save this record. Please try again.");
+        return;
+      }
+      setValues({});
+      setEditingId(null);
+      setFormOpen(false);
+      await loadRecords();
+    } catch {
+      setError("Unable to reach the submission service. Try again.");
+    } finally {
+      setSaving(false);
     }
-    await loadRecords();
-    setValues({});
-    setEditingId(null);
-    setFormOpen(false);
-    setError("");
   };
 
   return (
@@ -160,10 +170,7 @@ export default function ActivityModule({
             </p>
           </div>
           <div className={styles.actions}>
-            <button type="button" className={styles.secondaryButton} onClick={() => openForm("Draft")}>
-              Save draft
-            </button>
-            <button type="button" className={styles.primaryButton} onClick={() => openForm("Submitted")}>
+            <button type="button" className={styles.primaryButton} onClick={openForm}>
               <span aria-hidden="true">+</span> Add {itemLabel}
             </button>
           </div>
@@ -201,7 +208,12 @@ export default function ActivityModule({
           </div>
         </section>
 
-        {loading ? (
+        {loadError ? (
+          <section className={styles.empty} role="alert">
+            <h3>Unable to load your records</h3>
+            <button type="button" className={styles.secondaryButton} onClick={() => void loadRecords()}>Retry</button>
+          </section>
+        ) : loading ? (
           <section className={styles.empty}><h3>Loading your records…</h3></section>
         ) : filteredRecords.length > 0 ? (
           <section className={styles.grid} aria-label={`${title} records`}>
@@ -225,12 +237,11 @@ export default function ActivityModule({
                 )}
                 <div className={styles.cardFooter}>
                   <span>{fields.length} details available</span>
-                  {record.status !== "Rejected" && (
+                  {(record.status === "Draft" || record.status === "Submitted") && (
                     <button
                       type="button"
                       onClick={() => {
                         setEditingId(record.id);
-                        setSubmitMode(record.status === "Draft" ? "Draft" : "Submitted");
                         setValues(record.values);
                         setError("");
                         setFormOpen(true);
@@ -253,16 +264,13 @@ export default function ActivityModule({
                 : `Start by adding your first ${itemLabel.toLowerCase()}.`}
             </p>
             {!search && statusFilter === "All" && (
-              <button type="button" className={styles.primaryButton} onClick={() => openForm("Draft")}>
+              <button type="button" className={styles.primaryButton} onClick={openForm}>
                 Add your first {itemLabel}
               </button>
             )}
           </section>
         )}
 
-        <p className={styles.notice}>
-          Records are saved to your authenticated ERP account and remain available across devices.
-        </p>
       </div>
 
       {formOpen && (
@@ -270,7 +278,6 @@ export default function ActivityModule({
           <section className={styles.modal} role="dialog" aria-modal="true" aria-labelledby="activity-form-title">
             <div className={styles.modalHeader}>
               <div>
-                <p className={styles.eyebrow}>{submitMode === "Submitted" ? "Ready to submit" : "Work in progress"}</p>
                 <h2 id="activity-form-title">Add {itemLabel}</h2>
               </div>
               <button type="button" className={styles.closeButton} onClick={() => setFormOpen(false)} aria-label="Close form">×</button>
@@ -299,7 +306,7 @@ export default function ActivityModule({
               {error && <p className={styles.formError} role="alert">{error}</p>}
               <div className={styles.modalActions}>
                 <button type="button" className={styles.secondaryButton} onClick={() => setFormOpen(false)}>Cancel</button>
-                <button type="submit" className={styles.primaryButton}>{submitMode === "Submitted" ? "Submit record" : "Save draft"}</button>
+                <button type="submit" disabled={saving} className={styles.primaryButton}>{saving ? "Submitting…" : "Submit record"}</button>
               </div>
             </form>
           </section>

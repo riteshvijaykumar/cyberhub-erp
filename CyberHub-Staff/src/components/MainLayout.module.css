@@ -104,3 +104,10 @@
   flex: 1;
   padding: 2rem 2.2rem;
 }
+
+@media (max-width: 760px) {
+  .shell { flex-direction: column; }
+  .header { padding-inline: 1rem; position: static; }
+  .breadcrumb { flex-wrap: wrap; }
+  .content { padding: 1rem; }
+}

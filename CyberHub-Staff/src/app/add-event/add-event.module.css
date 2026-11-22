@@ -47,7 +47,7 @@
 }
 .discardBtn:hover { background: #fee2e2; border-color: #fca5a5; color: var(--danger); }
 
-.draftBtn {
+.addAnotherBtn {
   display: flex;
   align-items: center;
   gap: 0.4rem;
@@ -62,42 +62,43 @@
   transition: all var(--transition);
   box-shadow: var(--shadow-sm);
 }
-.draftBtn:hover { border-color: var(--accent); color: var(--accent); background: #f0f4ff; }
+.addAnotherBtn:hover { border-color: var(--accent); color: var(--accent); background: #f0f4ff; }
 
-/* ── Segmented Control ── */
-.segmentWrapper {
+/* Event selection */
+.modeFieldset { min-inline-size: 0; border: 0; }
+.modeFieldset legend { margin-bottom: 0.5rem; }
+
+.choiceGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  gap: 0.85rem;
+}
+
+.modeChoice {
   display: flex;
-  margin-bottom: 1.5rem;
-}
-.segment {
-  background: #fff;
-  border: 1.5px solid var(--border);
-  border-radius: var(--radius-lg);
-  display: inline-flex;
-  padding: 4px;
-  gap: 2px;
-  box-shadow: var(--shadow-sm);
-}
-.segBtn {
-  padding: 0.58rem 1.4rem;
-  border-radius: 10px;
-  border: none;
-  background: none;
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--text-secondary);
+  align-items: flex-start;
+  gap: 0.65rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
   cursor: pointer;
-  transition: all var(--transition);
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
 }
-.segBtn:hover { color: var(--primary); }
-.segBtnActive {
-  background: var(--primary-dark);
-  color: #fff;
-  box-shadow: 0 2px 8px rgba(13,35,71,0.25);
+
+.modeChoice:hover,
+.modeChoice:has(input:checked) {
+  border-color: var(--accent);
+  background: #f0f4ff;
 }
+
+.modeChoice:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.modeChoice input { margin-top: 0.2rem; accent-color: var(--accent); }
+.modeChoice strong, .modeChoice small { display: block; }
+.modeChoice small { margin-top: 0.35rem; color: var(--text-secondary); line-height: 1.45; }
+.eventSelection { margin-top: 0.65rem; color: var(--primary); font-size: 0.8rem; font-weight: 650; }
+.saveError { margin-top: 1rem; padding: 0.75rem 1rem; border-radius: var(--radius-md); background: #fff1f2; color: #9f1239; }
+.stepNavItem:disabled, .navContinueBtn:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
+.stepNavItem:disabled:hover { background: transparent; }
+.navContinueBtn:disabled:hover { background: var(--primary-dark); box-shadow: none; }
 
 /* ── Main Form Layout ── */
 .formLayout {
@@ -661,24 +662,7 @@
   gap: 1rem;
 }
 
-.bottomLeft { display: flex; align-items: center; gap: 0.65rem; }
-.bottomRight { display: flex; align-items: center; gap: 0.65rem; }
-
-.navDraftBtn {
-  padding: 0.65rem 1.1rem;
-  background: #fff;
-  border: 1.5px solid var(--border);
-  border-radius: var(--radius-md);
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all var(--transition);
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-.navDraftBtn:hover { border-color: var(--accent); color: var(--accent); }
+.bottomRight { display: flex; align-items: center; gap: 0.65rem; margin-inline-start: auto; }
 
 .navBackBtn {
   padding: 0.65rem 1.1rem;

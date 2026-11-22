@@ -1,12 +1,14 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import { pathToFileURL } from "node:url";
 import Fastify, { FastifyRequest } from "fastify";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import argon2 from "argon2";
-import { AchievementStatus, AchievementType, PrismaClient, UserRole } from "@prisma/client";
+import { AchievementStatus, AchievementType, Prisma, PrismaClient, UserRole } from "@prisma/client";
 import { z } from "zod";
+import { eventSchema } from "./eventValidation.js";
 
 const prisma = new PrismaClient();
 const env = {
@@ -27,7 +29,6 @@ type UserWithRelations = {
   email: string | null;
   phone?: string | null;
   name: string;
-  passwordHash?: string;
   role: UserRole;
   active: boolean;
   departmentId?: string | null;
@@ -81,19 +82,19 @@ const MOCK_USERS: Record<string, { password: string; user: UserWithRelations }> 
   "uat-student": {
     password: "password123",
     user: {
-      id: "usr-student-001",
+      id: "usr-student-uat",
       identifier: "uat-student",
       email: "uat-student@cyberhub.edu",
       phone: "+91 98765 43210",
-      name: "Alex Johnson",
+      name: "Jamie Lewis",
       role: UserRole.STUDENT,
       active: true,
       departmentId: MOCK_DEPT.id,
       department: MOCK_DEPT,
       student: {
-        id: "stu-profile-001",
-        userId: "usr-student-001",
-        registerNo: "21CY001",
+        id: "stu-profile-uat",
+        userId: "usr-student-uat",
+        registerNo: "21CY002",
         department: "Computer Science",
         departmentId: MOCK_DEPT.id,
         programme: "B.Tech Cybersecurity",
@@ -305,7 +306,7 @@ const achievementSchema = z.object({
 const reviewSchema = z.object({
   action: z.enum(["APPROVED", "REJECTED"]),
   comment: z.string().trim().max(2000).optional(),
-});
+}).refine(({ action, comment }) => action !== "REJECTED" || Boolean(comment));
 
 const profileUpdateSchema = z.object({
   name: z.string().trim().min(2).max(120),
@@ -313,12 +314,23 @@ const profileUpdateSchema = z.object({
   phone: z.string().trim().max(30).nullable().optional(),
 });
 
+type StoredDemoEvent = {
+  id: string; ownerId: string; mode: string; name: string; category: string;
+  eventDate: Date; facultyRole: string; details: z.infer<typeof eventSchema>;
+};
+const demoEvents: StoredDemoEvent[] = [];
+
 const app = Fastify({
   logger: {
     level: process.env.LOG_LEVEL ?? "info",
     redact: ["req.headers.authorization", "req.headers.cookie", "res.headers['set-cookie']"],
   },
-  trustProxy: true,
+  trustProxy: process.env.TRUST_PROXY === "1",
+});
+
+app.addHook("onClose", async () => { await prisma.$disconnect(); });
+app.addHook("onRequest", async (request, reply) => {
+  if (request.url.startsWith("/api/v1/")) reply.header("Cache-Control", "private, no-store");
 });
 
 await app.register(helmet);
@@ -326,10 +338,12 @@ await app.register(cookie);
 await app.register(cors, {
   origin: env.origins,
   credentials: true,
+  methods: ["GET", "HEAD", "POST", "PATCH", "OPTIONS"],
 });
 await app.register(rateLimit, {
-  max: 100,
+  max: 120,
   timeWindow: "1 minute",
+  keyGenerator: (request) => `${request.ip}:${request.method}:${request.routeOptions.url ?? "unknown"}`,
 });
 
 app.get("/health", async () => ({ status: "ok", service: "cyberhub-api" }));
@@ -348,14 +362,14 @@ app.get("/health/ready", async (_request, reply) => {
   }
 });
 
-app.get("/api/v1/auth/me", async (request, reply) => {
+app.get("/api/v1/auth/me", { config: { rateLimit: { max: 600 } } }, async (request, reply) => {
   const sessionId = request.cookies[env.cookieName];
   if (!sessionId) {
     return reply.code(401).send({ error: { code: "UNAUTHENTICATED", message: "Sign in required." } });
   }
 
   // Check in-memory preview session
-  const mockSession = mockSessions.get(sessionId);
+  const mockSession = env.production ? undefined : mockSessions.get(sessionId);
   if (mockSession) {
     if (mockSession.expiresAt <= new Date()) {
       mockSessions.delete(sessionId);
@@ -406,7 +420,7 @@ app.get("/api/v1/auth/me", async (request, reply) => {
 });
 
 app.post("/api/v1/auth/login", {
-  config: { rateLimit: { max: 50, timeWindow: "1 minute" } },
+  config: { rateLimit: { max: 15, timeWindow: "1 minute" } },
 }, async (request, reply) => {
   const parsed = loginSchema.safeParse(request.body);
   if (!parsed.success) {
@@ -416,7 +430,7 @@ app.post("/api/v1/auth/login", {
   const identifier = parsed.data.identifier.toLowerCase();
 
   // Check mock accounts first for preview/offline mode
-  const mockUserRecord = MOCK_USERS[identifier];
+  const mockUserRecord = env.production ? undefined : MOCK_USERS[identifier];
   if (mockUserRecord && mockUserRecord.password === parsed.data.password) {
     const sessionId = randomBytes(32).toString("base64url");
     const sessionDays = parsed.data.remember ? 30 : env.sessionTtlDays;
@@ -485,8 +499,7 @@ app.post("/api/v1/auth/login", {
 app.post("/api/v1/auth/logout", async (request, reply) => {
   const sessionId = request.cookies[env.cookieName];
   if (sessionId) {
-    mockSessions.delete(sessionId);
-    await prisma.session.delete({ where: { id: sessionId } }).catch(() => undefined);
+    if (!mockSessions.delete(sessionId)) await prisma.session.deleteMany({ where: { id: sessionId } });
   }
   reply.clearCookie(env.cookieName, { path: "/" });
   return { data: { success: true } };
@@ -496,7 +509,7 @@ async function getCurrentUser(request: FastifyRequest): Promise<UserWithRelation
   const sessionId = request.cookies[env.cookieName];
   if (!sessionId) return null;
 
-  const mockSession = mockSessions.get(sessionId);
+  const mockSession = env.production ? undefined : mockSessions.get(sessionId);
   if (mockSession) {
     if (mockSession.expiresAt <= new Date()) {
       mockSessions.delete(sessionId);
@@ -517,23 +530,42 @@ async function getCurrentUser(request: FastifyRequest): Promise<UserWithRelation
   }
 }
 
+function publicProfile(user: UserWithRelations) {
+  const { id, identifier, name, email, phone, role, department, student, staffProfile } = user;
+  return { id, identifier, name, email, phone, role, department, student, staffProfile };
+}
+
+function isDemoSession(request: FastifyRequest) {
+  return !env.production && mockSessions.has(request.cookies[env.cookieName] ?? "");
+}
+
+function reviewScope(user: UserWithRelations): Prisma.AchievementWhereInput | null {
+  if (user.role === UserRole.ADMIN) return {};
+  if ((user.role === UserRole.FACULTY || user.role === UserRole.HOD) && user.departmentId) {
+    return { student: { departmentId: user.departmentId } };
+  }
+  return null;
+}
+
+function mockStudentFor(studentId: string) {
+  return Object.values(MOCK_USERS).find(({ user }) => user.student?.id === studentId)?.user;
+}
+
+function inMockReviewScope(user: UserWithRelations, studentId: string) {
+  return user.role === UserRole.ADMIN || (
+    !!reviewScope(user) && mockStudentFor(studentId)?.student?.departmentId === user.departmentId
+  );
+}
+
+const achievementIncludes = {
+  documents: { select: { id: true, fileName: true, mimeType: true, sizeBytes: true, createdAt: true } },
+  approvals: { orderBy: { createdAt: "desc" }, take: 1, select: { action: true, comment: true } },
+} satisfies Prisma.AchievementInclude;
+
 app.get("/api/v1/profile", async (request, reply) => {
   const user = await getCurrentUser(request);
   if (!user) return reply.code(401).send({ error: { code: "UNAUTHENTICATED", message: "Sign in required." } });
-
-  if (mockSessions.has(request.cookies[env.cookieName] ?? "")) {
-    return { data: user };
-  }
-
-  try {
-    const profile = await prisma.user.findUnique({
-      where: { id: user.id },
-      include: { department: true, student: true, staffProfile: true },
-    });
-    return { data: profile };
-  } catch {
-    return { data: user };
-  }
+  return { data: publicProfile(user) };
 });
 
 app.patch("/api/v1/profile", async (request, reply) => {
@@ -542,23 +574,23 @@ app.patch("/api/v1/profile", async (request, reply) => {
   const parsed = profileUpdateSchema.safeParse(request.body);
   if (!parsed.success) return reply.code(400).send({ error: { code: "VALIDATION_ERROR", message: "Enter valid profile details." } });
 
-  user.name = parsed.data.name;
-  if (parsed.data.email !== undefined) user.email = parsed.data.email;
-  if (parsed.data.phone !== undefined) user.phone = parsed.data.phone;
+  if (isDemoSession(request)) {
+    Object.assign(user, parsed.data);
+    return { data: publicProfile(user) };
+  }
 
   try {
     const profile = await prisma.user.update({
       where: { id: user.id },
-      data: {
-        name: parsed.data.name,
-        email: parsed.data.email,
-        phone: parsed.data.phone,
-      },
+      data: parsed.data,
       include: { department: true, student: true, staffProfile: true },
     });
-    return { data: profile };
-  } catch {
-    return { data: user };
+    return { data: publicProfile(profile) };
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return reply.code(409).send({ error: { code: "EMAIL_IN_USE", message: "That email is already in use." } });
+    }
+    throw error;
   }
 });
 
@@ -566,29 +598,29 @@ app.get("/api/v1/achievements", async (request, reply) => {
   const user = await getCurrentUser(request);
   if (!user) return reply.code(401).send({ error: { code: "UNAUTHENTICATED", message: "Sign in required." } });
 
-  const sessionId = request.cookies[env.cookieName] ?? "";
-  if (mockSessions.has(sessionId)) {
-    if (user.role === UserRole.STUDENT && user.student) {
-      return { data: mockAchievements.filter((a) => a.studentId === user.student!.id) };
-    }
-    return { data: mockAchievements };
+  const isStudent = user.role === UserRole.STUDENT;
+  const scope = isStudent ? (user.student ? { studentId: user.student.id } : null) : reviewScope(user);
+  if (!scope) return reply.code(403).send({ error: { code: "FORBIDDEN", message: "No achievement access." } });
+
+  if (isDemoSession(request)) {
+    const records = mockAchievements.filter((record) => isStudent
+      ? record.studentId === user.student?.id
+      : record.status !== AchievementStatus.DRAFT && inMockReviewScope(user, record.studentId));
+    if (isStudent) return { data: records };
+    return { data: records.map((record) => {
+      const student = mockStudentFor(record.studentId);
+      return { ...record, student: { registerNo: student?.student?.registerNo, department: student?.student?.department, user: { name: student?.name } } };
+    }) };
   }
 
-  try {
-    const achievements = await prisma.achievement.findMany({
-      where: user.role === UserRole.STUDENT && user.student
-        ? { studentId: user.student.id }
-        : undefined,
-      include: { documents: true, approvals: { orderBy: { createdAt: "desc" }, take: 1 } },
-      orderBy: { createdAt: "desc" },
-    });
-    return { data: achievements };
-  } catch {
-    if (user.role === UserRole.STUDENT && user.student) {
-      return { data: mockAchievements.filter((a) => a.studentId === user.student!.id) };
-    }
-    return { data: mockAchievements };
-  }
+  const where: Prisma.AchievementWhereInput = isStudent ? scope : { ...scope, status: { not: AchievementStatus.DRAFT } };
+  const orderBy = { createdAt: "desc" } as const;
+  if (isStudent) return { data: await prisma.achievement.findMany({ where, orderBy, include: achievementIncludes }) };
+  return { data: await prisma.achievement.findMany({
+    where,
+    orderBy,
+    include: { ...achievementIncludes, student: { select: { registerNo: true, department: true, user: { select: { name: true } } } } },
+  }) };
 });
 
 app.get("/api/v1/student/summary", async (request, reply) => {
@@ -599,7 +631,14 @@ app.get("/api/v1/student/summary", async (request, reply) => {
 
   const counts = { total: 0, draft: 0, submitted: 0, approved: 0, rejected: 0 };
   const byType: Partial<Record<AchievementType, number>> = {};
-  const studentRecords = mockAchievements.filter((a) => a.studentId === user.student!.id);
+  const studentId = user.student.id;
+  const studentRecords = isDemoSession(request)
+    ? mockAchievements.filter((record) => record.studentId === studentId)
+    : await prisma.achievement.findMany({
+      where: { studentId },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, type: true, title: true, status: true, createdAt: true },
+    });
 
   for (const ach of studentRecords) {
     counts.total++;
@@ -621,6 +660,70 @@ app.get("/api/v1/student/summary", async (request, reply) => {
   return { data: { counts, byType, recent } };
 });
 
+app.get("/api/v1/staff/students", async (request, reply) => {
+  const user = await getCurrentUser(request);
+  if (!user) return reply.code(401).send({ error: { code: "UNAUTHENTICATED", message: "Sign in required." } });
+  if (!reviewScope(user)) return reply.code(403).send({ error: { code: "FORBIDDEN", message: "Staff access required." } });
+
+  if (isDemoSession(request)) {
+    const students = new Map<string, UserWithRelations>();
+    for (const { user: candidate } of Object.values(MOCK_USERS)) {
+      if (candidate.student && inMockReviewScope(user, candidate.student.id) && !students.has(candidate.student.id)) {
+        students.set(candidate.student.id, candidate);
+      }
+    }
+    return { data: Array.from(students, ([id, candidate]) => ({
+      ...candidate.student,
+      user: { name: candidate.name, email: candidate.email },
+      achievements: mockAchievements.filter((record) => record.studentId === id && record.status !== AchievementStatus.DRAFT),
+    })) };
+  }
+
+  return { data: await prisma.student.findMany({
+    where: user.role === UserRole.ADMIN ? {} : { departmentId: user.departmentId },
+    select: {
+      id: true, registerNo: true, department: true, programme: true, batch: true, semester: true,
+      user: { select: { name: true, email: true } },
+      achievements: {
+        where: { status: { not: AchievementStatus.DRAFT } },
+        orderBy: { createdAt: "desc" },
+        include: achievementIncludes,
+      },
+    },
+    orderBy: { registerNo: "asc" },
+  }) };
+});
+
+app.get("/api/v1/staff/events", async (request, reply) => {
+  const user = await getCurrentUser(request);
+  if (!user || user.role === UserRole.STUDENT) return reply.code(403).send({ error: { message: "Staff access required." } });
+  if (isDemoSession(request)) return { data: demoEvents.filter((event) => event.ownerId === user.id) };
+  return { data: await prisma.facultyEvent.findMany({ where: { ownerId: user.id }, orderBy: { createdAt: "desc" } }) };
+});
+
+app.post("/api/v1/staff/events", async (request, reply) => {
+  const user = await getCurrentUser(request);
+  if (!user || user.role === UserRole.STUDENT) return reply.code(403).send({ error: { message: "Staff access required." } });
+  const parsed = eventSchema.safeParse(request.body);
+  if (!parsed.success) return reply.code(400).send({ error: { message: "Check the required fields, event times, and participation details." } });
+
+  const event = {
+    ownerId: user.id,
+    mode: parsed.data.mode,
+    name: parsed.data.eventName,
+    category: parsed.data.eventType,
+    eventDate: new Date(parsed.data.eventDate),
+    facultyRole: parsed.data.facultyRole,
+    details: parsed.data,
+  };
+  if (isDemoSession(request)) {
+    const entry = { id: randomUUID(), ...event };
+    demoEvents.unshift(entry);
+    return reply.code(201).send({ data: entry });
+  }
+  return reply.code(201).send({ data: await prisma.facultyEvent.create({ data: event }) });
+});
+
 app.post("/api/v1/achievements", async (request, reply) => {
   const user = await getCurrentUser(request);
   if (!user || user.role !== UserRole.STUDENT || !user.student) {
@@ -629,6 +732,17 @@ app.post("/api/v1/achievements", async (request, reply) => {
   const parsed = achievementSchema.safeParse(request.body);
   if (!parsed.success) {
     return reply.code(400).send({ error: { code: "VALIDATION_ERROR", message: "Enter a valid achievement title and type." } });
+  }
+
+  if (!isDemoSession(request)) {
+    const { type, title, description, values, status } = parsed.data;
+    const record = await prisma.achievement.create({
+      data: {
+        studentId: user.student.id, submittedBy: user.id, type, title, description,
+        metadata: values, status, submittedAt: status === "SUBMITTED" ? new Date() : null,
+      },
+    });
+    return reply.code(201).send({ data: record });
   }
 
   const newAch: MockAchievementRecord = {
@@ -663,6 +777,21 @@ app.patch("/api/v1/achievements/:id", async (request, reply) => {
     return reply.code(400).send({ error: { code: "VALIDATION_ERROR", message: "Enter valid achievement details." } });
   }
 
+  if (!isDemoSession(request)) {
+    const { type, title, description, values, status } = parsed.data;
+    const where = { id: params.data.id, studentId: user.student.id };
+    const record = await prisma.achievement.findFirst({ where });
+    if (!record) return reply.code(404).send({ error: { code: "NOT_FOUND", message: "Achievement not found." } });
+    if (record.status === "DRAFT" || record.status === "SUBMITTED") {
+      const result = await prisma.achievement.updateMany({
+        where: { ...where, status: record.status, updatedAt: record.updatedAt },
+        data: { type, title, description: description ?? null, metadata: values, status, submittedAt: status === "SUBMITTED" ? record.submittedAt ?? new Date() : null },
+      });
+      if (result.count) return { data: await prisma.achievement.findFirst({ where }) };
+    }
+    return reply.code(409).send({ error: { code: "INVALID_STATE", message: "The achievement was reviewed or changed. Reload and try again." } });
+  }
+
   const existing = mockAchievements.find((a) => a.id === params.data.id && a.studentId === user.student!.id);
   if (!existing) return reply.code(404).send({ error: { code: "NOT_FOUND", message: "Achievement not found." } });
   if (existing.status === AchievementStatus.APPROVED || existing.status === AchievementStatus.REJECTED) {
@@ -685,8 +814,8 @@ app.patch("/api/v1/achievements/:id", async (request, reply) => {
 
 app.patch("/api/v1/achievements/:id/review", async (request, reply) => {
   const user = await getCurrentUser(request);
-  const reviewerRoles: UserRole[] = [UserRole.FACULTY, UserRole.HOD, UserRole.ADMIN];
-  if (!user || !reviewerRoles.includes(user.role)) {
+  const scope = user && reviewScope(user);
+  if (!user || !scope) {
     return reply.code(403).send({ error: { code: "FORBIDDEN", message: "Review permission required." } });
   }
   const parsed = reviewSchema.safeParse(request.body);
@@ -696,7 +825,28 @@ app.patch("/api/v1/achievements/:id/review", async (request, reply) => {
   const params = z.object({ id: z.string() }).safeParse(request.params);
   if (!params.success) return reply.code(400).send({ error: { code: "VALIDATION_ERROR", message: "Invalid achievement id." } });
 
-  const achievement = mockAchievements.find((a) => a.id === params.data.id);
+  if (!isDemoSession(request)) {
+    const where = { ...scope, id: params.data.id, status: { not: AchievementStatus.DRAFT } };
+    const record = await prisma.achievement.findFirst({ where, select: { id: true, status: true, updatedAt: true } });
+    if (!record) return reply.code(404).send({ error: { code: "NOT_FOUND", message: "Achievement not found." } });
+    const reviewed = await prisma.$transaction(async (transaction) => {
+      if (record.status !== AchievementStatus.SUBMITTED) return null;
+      const result = await transaction.achievement.updateMany({
+        where: { ...where, status: AchievementStatus.SUBMITTED, updatedAt: record.updatedAt },
+        data: { status: parsed.data.action, reviewedAt: new Date() },
+      });
+      if (!result.count) return null;
+      await transaction.approvalAction.create({
+        data: { achievementId: record.id, reviewerId: user.id, action: parsed.data.action, comment: parsed.data.comment },
+      });
+      return transaction.achievement.findUnique({ where: { id: record.id }, include: achievementIncludes });
+    });
+    if (reviewed) return { data: reviewed };
+    return reply.code(409).send({ error: { code: "INVALID_STATE", message: "The submission changed or was already reviewed." } });
+  }
+
+  const achievement = mockAchievements.find((a) => a.id === params.data.id
+    && a.status !== AchievementStatus.DRAFT && inMockReviewScope(user, a.studentId));
   if (!achievement) return reply.code(404).send({ error: { code: "NOT_FOUND", message: "Achievement not found." } });
   if (achievement.status !== AchievementStatus.SUBMITTED) {
     return reply.code(409).send({ error: { code: "INVALID_STATE", message: "Only submitted achievements can be reviewed." } });
@@ -718,6 +868,11 @@ app.patch("/api/v1/achievements/:id/review", async (request, reply) => {
 });
 
 app.setErrorHandler((error, request, reply) => {
+  const status = error && typeof error === "object" && "statusCode" in error ? error.statusCode : undefined;
+  if (typeof status === "number" && status >= 400 && status < 500) {
+    const message = status === 429 ? "Too many requests. Try again shortly." : "The request could not be processed.";
+    return reply.code(status).send({ error: { code: status === 429 ? "RATE_LIMITED" : "BAD_REQUEST", message } });
+  }
   request.log.error({ err: error }, "Unhandled request error");
   return reply.code(500).send({ error: { code: "INTERNAL_ERROR", message: "An unexpected error occurred." } });
 });
@@ -725,11 +880,13 @@ app.setErrorHandler((error, request, reply) => {
 const shutdown = async (signal: string) => {
   app.log.info({ signal }, "Shutting down");
   await app.close();
-  await prisma.$disconnect();
   process.exit(0);
 };
 
-process.once("SIGINT", () => void shutdown("SIGINT"));
-process.once("SIGTERM", () => void shutdown("SIGTERM"));
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  process.once("SIGINT", () => void shutdown("SIGINT"));
+  process.once("SIGTERM", () => void shutdown("SIGTERM"));
+  await app.listen({ port: env.port, host: "0.0.0.0" });
+}
 
-await app.listen({ port: env.port, host: "0.0.0.0" });
+export { app };

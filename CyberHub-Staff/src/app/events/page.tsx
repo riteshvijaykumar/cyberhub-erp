@@ -1,44 +1,22 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import MainLayout from "@/components/MainLayout";
 import styles from "./events.module.css";
 
-/* ────────────────────────────────────────────────
-   MOCK DATA — 12 events (attended + conducted)
-──────────────────────────────────────────────── */
-type EventStatus = "Approved" | "Pending Review" | "Rejected";
-type EventTab    = "attended" | "conducted";
+type EventTab = "attended" | "conducted";
 
 interface FacultyEvent {
-  id: number;
-  date: string;
+  id: string;
+  eventDate: string;
   name: string;
   category: string;
-  role: string;
-  status: EventStatus;
-  tab: EventTab;
+  facultyRole: string;
+  mode: EventTab;
 }
 
-const ALL_EVENTS: FacultyEvent[] = [
-  // Attended
-  { id:1,  date:"Oct 12, 2023", name:"Advanced Machine Learning Methodologies",      category:"FDP",       role:"Participant", status:"Approved",       tab:"attended" },
-  { id:2,  date:"Sep 28, 2023", name:"Cybersecurity in Higher Education",             category:"Seminar",   role:"Speaker",     status:"Pending Review", tab:"attended" },
-  { id:3,  date:"Aug 15, 2023", name:"Pedagogy Innovation Workshop",                 category:"Workshop",  role:"Participant", status:"Approved",       tab:"attended" },
-  { id:4,  date:"Jul 04, 2023", name:"Data Privacy and GDPR Compliance Summit",      category:"Conference",role:"Panelist",    status:"Approved",       tab:"attended" },
-  { id:5,  date:"Jun 20, 2023", name:"Cloud Security Fundamentals Bootcamp",         category:"FDP",       role:"Participant", status:"Approved",       tab:"attended" },
-  { id:6,  date:"May 10, 2023", name:"Ethical Hacking & Penetration Testing Seminar",category:"Seminar",   role:"Speaker",     status:"Pending Review", tab:"attended" },
-  { id:7,  date:"Apr 05, 2023", name:"Research Methodology for Computer Science",    category:"Workshop",  role:"Participant", status:"Approved",       tab:"attended" },
-  { id:8,  date:"Mar 18, 2023", name:"Blockchain Technology in Academia",            category:"Webinar",   role:"Participant", status:"Rejected",       tab:"attended" },
-  // Conducted
-  { id:9,  date:"Oct 02, 2023", name:"Intro to Cybersecurity for Engineering Students",category:"Seminar", role:"Coordinator", status:"Approved",       tab:"conducted" },
-  { id:10, date:"Aug 22, 2023", name:"Capture The Flag (CTF) Competition 2023",       category:"Workshop", role:"Organizer",   status:"Approved",       tab:"conducted" },
-  { id:11, date:"Jul 14, 2023", name:"Guest Lecture: Zero Trust Architecture",        category:"Seminar",  role:"Coordinator", status:"Pending Review", tab:"conducted" },
-  { id:12, date:"May 30, 2023", name:"Annual Department Tech Symposium",              category:"Conference",role:"Organizer",  status:"Approved",       tab:"conducted" },
-];
-
-const CATEGORIES = ["All", "FDP", "Seminar", "Workshop", "Conference", "Webinar"];
+const dateFormat = new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeZone: "UTC" });
 const DATE_FILTERS = ["Last 6 Months", "Last 3 Months", "This Year", "All Time"];
 const PER_PAGE = 3;
 
@@ -60,12 +38,6 @@ const IcoFilter = () => (
     <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
   </svg>
 );
-const IcoDownload = () => (
-  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-    <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-  </svg>
-);
 const IcoChevronLeft  = () => (
   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
     <polyline points="15 18 9 12 15 6"/>
@@ -81,11 +53,6 @@ const IcoPlus = () => (
     <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
   </svg>
 );
-const IcoX = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-  </svg>
-);
 const IcoChevronDown = () => (
   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
     <polyline points="6 9 12 15 18 9"/>
@@ -93,94 +60,47 @@ const IcoChevronDown = () => (
 );
 
 /* ── Status Badge ── */
-function StatusBadge({ status }: { status: EventStatus }) {
-  const cls =
-    status === "Approved"       ? styles.badgeApproved :
-    status === "Pending Review" ? styles.badgePending  :
-                                  styles.badgeRejected;
-  return <span className={`${styles.badge} ${cls}`}>{status}</span>;
-}
-
-/* ── Log New Event Modal ── */
-function LogEventModal({ onClose }: { onClose: () => void }) {
-  const [form, setForm] = useState({
-    name: "", date: "", category: "FDP", role: "Participant", venue: "", description: ""
-  });
-
-  const update = (field: string, val: string) => setForm((p) => ({ ...p, [field]: val }));
-
-  return (
-    <div className={styles.modalOverlay} onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={styles.modal} role="dialog" aria-modal="true" aria-labelledby="modal-title">
-        <div className={styles.modalHeader}>
-          <h2 className={styles.modalTitle} id="modal-title">Log New Event</h2>
-          <button className={styles.modalClose} onClick={onClose} aria-label="Close"><IcoX /></button>
-        </div>
-        <div className={styles.modalBody}>
-          <div className={`${styles.formGroup} ${styles.formControlFull}`}>
-            <label className={styles.formLabel}>Event Name *</label>
-            <input className={styles.formControl} placeholder="e.g. National Cybersecurity Summit" value={form.name} onChange={(e) => update("name", e.target.value)}/>
-          </div>
-          <div className={styles.formRow}>
-            <div className={styles.formGroup}>
-              <label className={styles.formLabel}>Date *</label>
-              <input type="date" className={styles.formControl} value={form.date} onChange={(e) => update("date", e.target.value)}/>
-            </div>
-            <div className={styles.formGroup}>
-              <label className={styles.formLabel}>Category *</label>
-              <select className={styles.formControl} value={form.category} onChange={(e) => update("category", e.target.value)}>
-                {CATEGORIES.filter((c) => c !== "All").map((c) => <option key={c}>{c}</option>)}
-              </select>
-            </div>
-          </div>
-          <div className={styles.formRow}>
-            <div className={styles.formGroup}>
-              <label className={styles.formLabel}>Your Role *</label>
-              <select className={styles.formControl} value={form.role} onChange={(e) => update("role", e.target.value)}>
-                {["Participant","Speaker","Panelist","Coordinator","Organizer"].map((r) => <option key={r}>{r}</option>)}
-              </select>
-            </div>
-            <div className={styles.formGroup}>
-              <label className={styles.formLabel}>Venue / Platform</label>
-              <input className={styles.formControl} placeholder="e.g. IIT Chennai / Online" value={form.venue} onChange={(e) => update("venue", e.target.value)}/>
-            </div>
-          </div>
-          <div className={styles.formGroup}>
-            <label className={styles.formLabel}>Description</label>
-            <textarea className={styles.formControl} rows={3} placeholder="Brief description of the event…" value={form.description} onChange={(e) => update("description", e.target.value)} style={{resize:"vertical"}}/>
-          </div>
-        </div>
-        <div className={styles.modalFooter}>
-          <button className={styles.btnSecondary} onClick={onClose}>Cancel</button>
-          <button className={styles.btnPrimary} onClick={onClose}>Submit for Review</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════════
-   MAIN PAGE
-═══════════════════════════════════════════════ */
 export default function EventsPage() {
   const router = useRouter();
   const [activeTab, setActiveTab]     = useState<EventTab>("attended");
   const [search, setSearch]           = useState("");
-  const [dateFilter, setDateFilter]   = useState("Last 6 Months");
+  const [dateFilter, setDateFilter]   = useState("All Time");
   const [catFilter, setCatFilter]     = useState("All");
   const [page, setPage]               = useState(1);
   const [showDateDrop, setShowDateDrop] = useState(false);
   const [showCatDrop, setShowCatDrop]   = useState(false);
 
-  /* Filtered + paginated events */
-  const filtered = useMemo(() => {
-    return ALL_EVENTS.filter((ev) => {
-      if (ev.tab !== activeTab) return false;
-      if (search && !ev.name.toLowerCase().includes(search.toLowerCase())) return false;
-      if (catFilter !== "All" && ev.category !== catFilter) return false;
-      return true;
+  const [events, setEvents] = useState<FacultyEvent[]>([]);
+  const [loadState, setLoadState] = useState<"loading" | "error" | "ready">("loading");
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000"}/api/v1/staff/events`, {
+      credentials: "include", cache: "no-store", signal: controller.signal,
+    }).then(async (response) => {
+      if (!response.ok) throw new Error();
+      const payload = await response.json() as { data: FacultyEvent[] };
+      setEvents(payload.data);
+      setLoadState("ready");
+    }).catch(() => {
+      if (!controller.signal.aborted) setLoadState("error");
     });
-  }, [activeTab, search, catFilter]);
+    return () => controller.abort();
+  }, []);
+
+  const categories = ["All", ...new Set(events.map((event) => event.category))];
+  const filtered = useMemo(() => {
+    const now = new Date();
+    const cutoff = dateFilter === "This Year" ? new Date(Date.UTC(now.getUTCFullYear(), 0, 1)) : new Date(now);
+    if (dateFilter === "Last 3 Months") cutoff.setUTCMonth(cutoff.getUTCMonth() - 3);
+    if (dateFilter === "Last 6 Months") cutoff.setUTCMonth(cutoff.getUTCMonth() - 6);
+    return events.filter((event) => (
+      event.mode === activeTab
+      && event.name.toLowerCase().includes(search.trim().toLowerCase())
+      && (catFilter === "All" || event.category === catFilter)
+      && (dateFilter === "All Time" || new Date(event.eventDate) >= cutoff)
+    ));
+  }, [events, activeTab, search, catFilter, dateFilter]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PER_PAGE));
   const paginated  = filtered.slice((page - 1) * PER_PAGE, page * PER_PAGE);
@@ -270,7 +190,7 @@ export default function EventsPage() {
               </button>
               {showCatDrop && (
                 <div style={{ position:"absolute", top:"100%", right:0, marginTop:4, background:"#fff", border:"1.5px solid var(--border)", borderRadius:10, boxShadow:"var(--shadow-md)", zIndex:100, minWidth:130, overflow:"hidden" }}>
-                  {CATEGORIES.map((c) => (
+                  {categories.map((c) => (
                     <button key={c} onClick={() => handleCat(c)}
                       style={{ display:"block", width:"100%", textAlign:"left", padding:"0.55rem 0.9rem", background: c === catFilter ? "#eef2ff":"transparent", color: c === catFilter ? "var(--accent)":"var(--text-primary)", border:"none", fontSize:"0.82rem", fontWeight: c===catFilter ? 600:400, cursor:"pointer", fontFamily:"inherit" }}>
                       {c}
@@ -287,7 +207,7 @@ export default function EventsPage() {
           {paginated.length === 0 ? (
             <div className={styles.emptyState}>
               <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/></svg>
-              <div className={styles.emptyTitle}>No events found</div>
+              <div className={styles.emptyTitle}>{loadState === "loading" ? "Loading events..." : loadState === "error" ? "Events could not be loaded." : "No events found"}</div>
               <div className={styles.emptyDesc}>Try adjusting your search or filters.</div>
             </div>
           ) : (
@@ -298,29 +218,15 @@ export default function EventsPage() {
                   <th>Event Name</th>
                   <th>Category</th>
                   <th>Role</th>
-                  <th>Status</th>
-                  <th style={{ textAlign: "right" }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {paginated.map((ev) => (
                   <tr key={ev.id}>
-                    <td className={styles.dateCell}>{ev.date}</td>
+                    <td className={styles.dateCell}>{dateFormat.format(new Date(ev.eventDate))}</td>
                     <td><div className={styles.eventName}>{ev.name}</div></td>
                     <td><span className={styles.categoryBadge}>{ev.category}</span></td>
-                    <td><span className={styles.roleBadge}>{ev.role}</span></td>
-                    <td><StatusBadge status={ev.status} /></td>
-                    <td style={{ textAlign: "right" }}>
-                      {ev.status === "Approved" ? (
-                        <button className={styles.actionBtn} title="Download Certificate">
-                          <IcoDownload /> Certificate
-                        </button>
-                      ) : (
-                        <span className={`${styles.actionBtn} ${styles.disabled}`}>
-                          <IcoDownload /> Pending
-                        </span>
-                      )}
-                    </td>
+                    <td><span className={styles.roleBadge}>{ev.facultyRole}</span></td>
                   </tr>
                 ))}
               </tbody>
