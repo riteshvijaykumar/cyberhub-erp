@@ -421,7 +421,11 @@ export default function ApprovalsPage() {
                         {doc.mimeType === "application/pdf" ? "PDF" : "FILE"}
                       </div>
                       <div className={styles.docInfo}>
-                        <div className={styles.docName}>{doc.fileName}</div>
+                        <div className={styles.docName}>
+                          {["COMPETITION", "CERTIFICATE", "INTERNSHIP", "PUBLICATION", "PATENT", "AWARD"].includes(panelRecord.type) ? (
+                            <a href={`${API_URL}/api/v1/achievements/${panelRecord.id}/documents/${doc.id}`}>{doc.fileName}</a>
+                          ) : doc.fileName}
+                        </div>
                         <div className={styles.docMeta}>{doc.mimeType === "application/pdf" ? "PDF" : "FILE"} · {Math.ceil(doc.sizeBytes / 1024)} KB · Uploaded {doc.createdAt ? fmtDate(doc.createdAt) : "Unknown date"}</div>
                       </div>
 

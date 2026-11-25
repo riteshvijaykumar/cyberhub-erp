@@ -6,6 +6,7 @@ import { getStaffDirectory } from "@/lib/staffDirectory";
 import styles from "../page.module.css";
 
 const dateFormat = new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeZone: "UTC" });
+const api = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 const statusLabels: Record<ApprovalStatus, string> = {
   DRAFT: "Draft",
   SUBMITTED: "Pending review",
@@ -96,6 +97,11 @@ export default async function StudentProfilePage({ params }: { params: Promise<{
                         <div><dt>Size</dt><dd>{Math.ceil(document.sizeBytes / 1024)} KB</dd></div>
                         <div><dt>Uploaded</dt><dd>{document.createdAt ? formatDate(document.createdAt) : "?"}</dd></div>
                       </dl>
+                      {["COMPETITION", "CERTIFICATE", "INTERNSHIP", "PUBLICATION", "PATENT", "AWARD"].includes(record.type) && (
+                        <a className={styles.documentLink} href={`${api}/api/v1/achievements/${record.id}/documents/${document.id}`}>
+                          Download {document.fileName}
+                        </a>
+                      )}
                     </details>
                   ))}
                 </div>

@@ -9,6 +9,7 @@ import argon2 from "argon2";
 import { AchievementStatus, AchievementType, Prisma, PrismaClient, UserRole } from "@prisma/client";
 import { z } from "zod";
 import { eventSchema } from "./eventValidation.js";
+import { evidenceBodyLimit, evidenceSchema, competitionValuesSchema, readAchievementEvidence, withAchievementEvidence } from "./achievementEvidence.js";
 
 const prisma = new PrismaClient();
 const env = {
@@ -295,13 +296,102 @@ const loginSchema = z.object({
   remember: z.boolean().optional().default(false),
 });
 
+const credentialValuesSchema = z.object({
+  issuer: z.string().trim().min(1).max(200),
+  certifyingBody: z.string().trim().max(200).optional(),
+  dateEarned: z.iso.date().optional(),
+  duration: z.string().trim().max(100).optional(),
+  credentialId: z.string().trim().max(200).optional(),
+  notes: z.string().trim().max(1500).optional(),
+});
+
+const internshipValuesSchema = z.object({
+  company: z.string().trim().min(1).max(200),
+  workMode: z.enum(["On-site", "Remote", "Hybrid"]),
+  location: z.string().trim().max(200).optional(),
+  internshipType: z.string().trim().max(100).optional(),
+  startDate: z.iso.date(),
+  endDate: z.iso.date().optional(),
+  compensation: z.string().trim().max(150).optional(),
+  details: z.string().trim().max(1500).optional(),
+}).refine(({ startDate, endDate }) => !endDate || endDate >= startDate);
+
+const projectValuesSchema = z.object({
+  fundingAgency: z.string().trim().min(1).max(200),
+  amount: z.string().regex(/^\d{1,12}(?:\.\d{1,2})?$/),
+  currency: z.string().regex(/^[A-Z]{3}$/),
+  projectType: z.enum(["Funded Student", "Innovation", "Startup", "Research"]).optional(),
+  projectStatus: z.enum(["Active", "Completed", "Upcoming"]).optional(),
+  details: z.string().trim().max(1500).optional(),
+});
+
+const publicationIndexes = z.enum(["Scopus", "Web of Science", "UGC", "Others"]);
+const publicationValuesSchema = z.object({
+  level: z.enum(["College", "National", "International"]),
+  publicationType: z.enum(["Journal", "Conference", "Symposium"]),
+  venue: z.string().trim().min(1).max(200),
+  publicationDate: z.iso.date(),
+  indexedBy: z.string().max(100).refine((value) => {
+    const indexes = value.split(", ");
+    return indexes.every((index) => publicationIndexes.safeParse(index).success)
+      && new Set(indexes).size === indexes.length;
+  }).optional(),
+  publicationLink: z.url().max(1000).refine((value) => /^https?:\/\//i.test(value)).optional(),
+});
+
+const patentValuesSchema = z.object({
+  patentOffice: z.string().trim().min(1).max(150),
+  patentStatus: z.enum(["Filed", "Under Examination", "Granted"]),
+  filingDate: z.iso.date(),
+  applicationNo: z.string().trim().max(150).optional(),
+  inventors: z.string().trim().max(500).optional(),
+  details: z.string().trim().max(1500).optional(),
+});
+
+const awardValuesSchema = z.object({
+  details: z.string().trim().min(1).max(1500),
+  level: z.enum(["Institutional", "District", "State", "Regional", "National", "International"]),
+  issuer: z.string().trim().min(1).max(200),
+  ceremonyDate: z.iso.date(),
+  recognition: z.string().trim().max(500).optional(),
+});
+
+const submittedValuesSchemas: Partial<Record<AchievementType, z.ZodType>> = {
+  COMPETITION: competitionValuesSchema,
+  CERTIFICATE: credentialValuesSchema,
+  INTERNSHIP: internshipValuesSchema,
+  PROJECT: projectValuesSchema,
+  PUBLICATION: publicationValuesSchema,
+  PATENT: patentValuesSchema,
+  AWARD: awardValuesSchema,
+};
+
+const evidenceLimits: Partial<Record<AchievementType, number>> = {
+  COMPETITION: 2, CERTIFICATE: 1, INTERNSHIP: 2, PUBLICATION: 1, PATENT: 1, AWARD: 1,
+};
+const evidenceTypes = Object.keys(evidenceLimits) as AchievementType[];
+
+function evidenceLimit(type: AchievementType) {
+  return evidenceLimits[type] ?? 0;
+}
+
 const achievementSchema = z.object({
   type: z.nativeEnum(AchievementType),
   title: z.string().trim().min(3).max(200),
   description: z.string().trim().max(5000).optional(),
   values: z.record(z.string(), z.string()).optional().default({}),
   status: z.enum(["DRAFT", "SUBMITTED"]).default("SUBMITTED"),
-});
+  evidence: evidenceSchema.optional().default([]),
+}).refine(({ type, evidence }) => evidence.length <= evidenceLimit(type))
+  .refine(({ type, evidence }) => {
+    if (type !== "INTERNSHIP") return evidence.every((file) => !file.kind);
+    return evidence.every((file) => file.kind) && new Set(evidence.map((file) => file.kind)).size === evidence.length;
+  })
+  .refine(({ type, values, status }) => (
+    status === "DRAFT" || (submittedValuesSchemas[type]?.safeParse(values).success ?? true)
+  ));
+
+const achievementFormError = "Check the required fields and any attached files.";
 
 const reviewSchema = z.object({
   action: z.enum(["APPROVED", "REJECTED"]),
@@ -724,49 +814,53 @@ app.post("/api/v1/staff/events", async (request, reply) => {
   return reply.code(201).send({ data: await prisma.facultyEvent.create({ data: event }) });
 });
 
-app.post("/api/v1/achievements", async (request, reply) => {
+app.post("/api/v1/achievements", { bodyLimit: evidenceBodyLimit }, async (request, reply) => {
   const user = await getCurrentUser(request);
   if (!user || user.role !== UserRole.STUDENT || !user.student) {
     return reply.code(403).send({ error: { code: "FORBIDDEN", message: "Only students can submit achievements." } });
   }
   const parsed = achievementSchema.safeParse(request.body);
   if (!parsed.success) {
-    return reply.code(400).send({ error: { code: "VALIDATION_ERROR", message: "Enter a valid achievement title and type." } });
+    return reply.code(400).send({ error: { code: "VALIDATION_ERROR", message: achievementFormError } });
   }
 
-  if (!isDemoSession(request)) {
-    const { type, title, description, values, status } = parsed.data;
-    const record = await prisma.achievement.create({
+  const demo = isDemoSession(request);
+  const { type, title, description, values, status, evidence } = parsed.data;
+  const studentId = user.student.id;
+  const record = await withAchievementEvidence(evidence, demo, async (documents) => {
+    if (!demo) return prisma.achievement.create({
       data: {
-        studentId: user.student.id, submittedBy: user.id, type, title, description,
+        studentId, submittedBy: user.id, type, title, description,
         metadata: values, status, submittedAt: status === "SUBMITTED" ? new Date() : null,
+        documents: { create: documents },
       },
+      include: achievementIncludes,
     });
-    return reply.code(201).send({ data: record });
-  }
 
-  const newAch: MockAchievementRecord = {
-    id: randomUUID(),
-    type: parsed.data.type,
-    title: parsed.data.title,
-    description: parsed.data.description ?? null,
-    studentId: user.student.id,
-    submittedBy: user.id,
-    status: parsed.data.status === "DRAFT" ? AchievementStatus.DRAFT : AchievementStatus.SUBMITTED,
-    submittedAt: parsed.data.status === "SUBMITTED" ? new Date() : null,
-    reviewedAt: null,
-    metadata: parsed.data.values ?? null,
-    documents: [],
-    approvals: [],
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  };
+    const newAch: MockAchievementRecord = {
+      id: randomUUID(),
+      type,
+      title,
+      description: description ?? null,
+      studentId,
+      submittedBy: user.id,
+      status,
+      submittedAt: status === "SUBMITTED" ? new Date() : null,
+      reviewedAt: null,
+      metadata: values,
+      documents,
+      approvals: [],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
 
-  mockAchievements.unshift(newAch);
-  return reply.code(201).send({ data: newAch });
+    mockAchievements.unshift(newAch);
+    return newAch;
+  });
+  return reply.code(201).send({ data: record });
 });
 
-app.patch("/api/v1/achievements/:id", async (request, reply) => {
+app.patch("/api/v1/achievements/:id", { bodyLimit: evidenceBodyLimit }, async (request, reply) => {
   const user = await getCurrentUser(request);
   if (!user || user.role !== UserRole.STUDENT || !user.student) {
     return reply.code(403).send({ error: { code: "FORBIDDEN", message: "Only students can edit achievements." } });
@@ -774,42 +868,94 @@ app.patch("/api/v1/achievements/:id", async (request, reply) => {
   const params = z.object({ id: z.string() }).safeParse(request.params);
   const parsed = achievementSchema.safeParse(request.body);
   if (!params.success || !parsed.success) {
-    return reply.code(400).send({ error: { code: "VALIDATION_ERROR", message: "Enter valid achievement details." } });
+    return reply.code(400).send({ error: { code: "VALIDATION_ERROR", message: achievementFormError } });
   }
 
-  if (!isDemoSession(request)) {
-    const { type, title, description, values, status } = parsed.data;
-    const where = { id: params.data.id, studentId: user.student.id };
-    const record = await prisma.achievement.findFirst({ where });
+  const demo = isDemoSession(request);
+  const { type, title, description, values, status, evidence } = parsed.data;
+  const where = { id: params.data.id, studentId: user.student.id, type };
+  const limit = evidenceLimit(type);
+  const attachmentConflict = () => reply.code(400).send({ error: {
+    message: type === "INTERNSHIP" ? "An internship can have one offer letter and one completion certificate."
+      : limit === 1 ? "Each record can have one attachment." : "Each competition can have up to two attachments.",
+  } });
+  const exceedsAttachmentLimit = (existing: { id: string }[]) => evidence.length > 0 && (
+    existing.length + evidence.length > limit
+    || evidence.some(({ kind }) => kind && existing.some(({ id }) => id.startsWith(`${kind}-`)))
+  );
+  if (!demo) {
+    const record = await prisma.achievement.findFirst({ where, include: { documents: { select: { id: true } } } });
     if (!record) return reply.code(404).send({ error: { code: "NOT_FOUND", message: "Achievement not found." } });
+    if (exceedsAttachmentLimit(record.documents)) return attachmentConflict();
     if (record.status === "DRAFT" || record.status === "SUBMITTED") {
-      const result = await prisma.achievement.updateMany({
-        where: { ...where, status: record.status, updatedAt: record.updatedAt },
-        data: { type, title, description: description ?? null, metadata: values, status, submittedAt: status === "SUBMITTED" ? record.submittedAt ?? new Date() : null },
-      });
-      if (result.count) return { data: await prisma.achievement.findFirst({ where }) };
+      const updated = await withAchievementEvidence(evidence, false, (documents) => prisma.$transaction(async (tx) => {
+        const result = await tx.achievement.updateMany({
+          where: { ...where, status: record.status, updatedAt: record.updatedAt },
+          data: { title, description: description ?? null, metadata: values, status, submittedAt: status === "SUBMITTED" ? record.submittedAt ?? new Date() : null },
+        });
+        if (!result.count) return null;
+        if (documents.length) {
+          const existing = await tx.achievementDocument.findMany({ where: { achievementId: record.id }, select: { id: true } });
+          if (exceedsAttachmentLimit(existing)) {
+            throw new Error("Attachment limit changed during submission.");
+          }
+          await tx.achievementDocument.createMany({ data: documents.map((document) => ({ ...document, achievementId: record.id })) });
+        }
+        return tx.achievement.findFirst({ where, include: achievementIncludes });
+      }));
+      if (updated) return { data: updated };
     }
     return reply.code(409).send({ error: { code: "INVALID_STATE", message: "The achievement was reviewed or changed. Reload and try again." } });
   }
 
-  const existing = mockAchievements.find((a) => a.id === params.data.id && a.studentId === user.student!.id);
+  const existing = mockAchievements.find((a) => a.id === where.id && a.studentId === where.studentId && a.type === type);
   if (!existing) return reply.code(404).send({ error: { code: "NOT_FOUND", message: "Achievement not found." } });
   if (existing.status === AchievementStatus.APPROVED || existing.status === AchievementStatus.REJECTED) {
     return reply.code(409).send({ error: { code: "INVALID_STATE", message: "Reviewed achievements cannot be edited." } });
   }
 
-  const status = parsed.data.status === "DRAFT" ? AchievementStatus.DRAFT : AchievementStatus.SUBMITTED;
-  existing.type = parsed.data.type;
-  existing.title = parsed.data.title;
-  existing.description = parsed.data.description ?? null;
-  existing.metadata = parsed.data.values ?? null;
-  existing.status = status;
-  if (status === AchievementStatus.SUBMITTED && !existing.submittedAt) {
-    existing.submittedAt = new Date();
-  }
-  existing.updatedAt = new Date();
+  if (exceedsAttachmentLimit(existing.documents)) return attachmentConflict();
+  await withAchievementEvidence(evidence, true, async (documents) => {
+    existing.title = title;
+    existing.description = description ?? null;
+    existing.metadata = values;
+    existing.status = status;
+    existing.submittedAt = status === "SUBMITTED" ? existing.submittedAt ?? new Date() : null;
+    existing.updatedAt = new Date();
+    existing.documents.push(...documents);
+    return existing;
+  });
 
   return { data: existing };
+});
+
+app.get<{ Params: { id: string; documentId: string } }>("/api/v1/achievements/:id/documents/:documentId", async (request, reply) => {
+  const user = await getCurrentUser(request);
+  if (!user) return reply.code(401).send({ error: { message: "Sign in required." } });
+
+  const demo = isDemoSession(request);
+  const { id, documentId } = request.params;
+  const staffScope = reviewScope(user);
+  const scope = user.role === UserRole.STUDENT
+    ? (user.student ? { studentId: user.student.id } : null)
+    : (staffScope ? { ...staffScope, status: { not: AchievementStatus.DRAFT } } : null);
+  if (!scope) return reply.code(403).send({ error: { message: "No document access." } });
+
+  const document = demo
+    ? mockAchievements.find((record) => record.id === id && evidenceTypes.includes(record.type) && (
+      user.role === UserRole.STUDENT ? record.studentId === user.student?.id
+        : record.status !== AchievementStatus.DRAFT && inMockReviewScope(user, record.studentId)
+    ))?.documents.find((file) => file.id === documentId)
+    : await prisma.achievementDocument.findFirst({
+      where: { id: documentId, achievement: { ...scope, id, type: { in: evidenceTypes } } },
+    });
+  const bytes = document ? await readAchievementEvidence(document.storageKey, demo) : undefined;
+  if (!document || !bytes) return reply.code(404).send({ error: { message: "File not found." } });
+
+  const encodedName = encodeURIComponent(Buffer.from(document.fileName).toString()).replace(/['()*]/g, (char) => `%${char.charCodeAt(0).toString(16)}`);
+  return reply.type(document.mimeType)
+    .header("Content-Disposition", `attachment; filename*=UTF-8''${encodedName}`)
+    .send(bytes);
 });
 
 app.patch("/api/v1/achievements/:id/review", async (request, reply) => {

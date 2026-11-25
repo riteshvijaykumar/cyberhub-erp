@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import DashboardLayout from "@/components/DashboardLayout/DashboardLayout";
 import Header from "@/components/Header/Header";
 import styles from "./ActivityModule.module.css";
@@ -19,7 +20,10 @@ export interface ActivityModuleProps {
   eyebrow: string;
   itemLabel: string;
   fields: ActivityField[];
+  formHref?: string;
 }
+
+interface ActivityDocument { id: string; fileName: string }
 
 interface ActivityRecord {
   id: string;
@@ -27,6 +31,7 @@ interface ActivityRecord {
   createdAt: string;
   values: Record<string, string>;
   rejectionReason?: string;
+  documents?: ActivityDocument[];
 }
 
 interface ApiActivityRecord {
@@ -38,6 +43,7 @@ interface ApiActivityRecord {
   metadata?: Record<string, string> | null;
   createdAt: string;
   approvals?: Array<{ action: string; comment?: string | null }>;
+  documents?: ActivityDocument[];
 }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
@@ -49,6 +55,7 @@ export default function ActivityModule({
   eyebrow,
   itemLabel,
   fields,
+  formHref,
 }: ActivityModuleProps) {
   const [records, setRecords] = useState<ActivityRecord[]>([]);
   const [search, setSearch] = useState("");
@@ -74,7 +81,8 @@ export default function ActivityModule({
           id: record.id,
           status: record.status === "DRAFT" ? "Draft" : record.status === "APPROVED" ? "Approved" : record.status === "REJECTED" ? "Rejected" : "Submitted",
           createdAt: new Intl.DateTimeFormat("en-IN", { dateStyle: "medium" }).format(new Date(record.createdAt)),
-          values: { title: record.title, ...(record.metadata ?? {}), description: record.description ?? "" },
+          values: { ...(record.metadata ?? {}), title: record.title, description: record.description ?? "" },
+          documents: record.documents,
           rejectionReason: record.approvals?.find((approval) => approval.action === "REJECTED")?.comment?.trim(),
         })));
     } catch {
@@ -170,9 +178,15 @@ export default function ActivityModule({
             </p>
           </div>
           <div className={styles.actions}>
-            <button type="button" className={styles.primaryButton} onClick={openForm}>
-              <span aria-hidden="true">+</span> Add {itemLabel}
-            </button>
+            {formHref ? (
+              <Link className={styles.primaryButton} href={formHref} prefetch={false}>
+                <span aria-hidden="true">+</span> Add {itemLabel}
+              </Link>
+            ) : (
+              <button type="button" className={styles.primaryButton} onClick={openForm}>
+                <span aria-hidden="true">+</span> Add {itemLabel}
+              </button>
+            )}
           </div>
         </section>
 
@@ -226,7 +240,28 @@ export default function ActivityModule({
                   <span className={styles.date}>{record.createdAt}</span>
                 </div>
                 <h3>{record.values[fields[0]?.key] || itemLabel}</h3>
-                <p>{record.values[fields[1]?.key] || "No additional details added yet."}</p>
+                <p>{record.values[fields[1]?.key] || (activityType === "PROJECT" && record.values.technology) || "No additional details added yet."}</p>
+                {formHref && (
+                  <details className={styles.recordDetails}>
+                    <summary>{itemLabel} details</summary>
+                    <dl>
+                      {fields.slice(2).filter((field) => record.values[field.key]).map((field) => (
+                        <div key={field.key}><dt>{field.label}</dt><dd>
+                          {field.key === "publicationLink" && /^https?:\/\//i.test(record.values[field.key])
+                            ? <a href={record.values[field.key]} target="_blank" rel="noreferrer">{record.values[field.key]}</a>
+                            : record.values[field.key]}
+                        </dd></div>
+                      ))}
+                      {record.values.result && <div><dt>Result or recognition</dt><dd>{record.values.result}</dd></div>}
+                    </dl>
+                    {record.documents?.map((document) => (
+                      <a key={document.id} href={`${API_URL}/api/v1/achievements/${record.id}/documents/${document.id}`}>
+                        {document.id.startsWith("offer-letter-") ? "Offer letter · " : document.id.startsWith("completion-certificate-") ? "Completion certificate · " : ""}
+                        {document.fileName}
+                      </a>
+                    ))}
+                  </details>
+                )}
                 {record.status === "Rejected" && (
                   <div className={styles.rejectionNotice}>
                     <strong>Your submission was rejected.</strong>
@@ -236,9 +271,10 @@ export default function ActivityModule({
                   </div>
                 )}
                 <div className={styles.cardFooter}>
-                  <span>{fields.length} details available</span>
+                  <span>{formHref && activityType !== "PROJECT" ? `${record.documents?.length ?? 0} attachment(s)`
+                    : `${activityType === "PROJECT" ? fields.slice(1).filter((field) => record.values[field.key]).length : fields.length} details available`}</span>
                   {(record.status === "Draft" || record.status === "Submitted") && (
-                    <button
+                    formHref ? <Link href={`${formHref}?edit=${encodeURIComponent(record.id)}`} prefetch={false}>Edit</Link> : <button
                       type="button"
                       onClick={() => {
                         setEditingId(record.id);
@@ -264,9 +300,9 @@ export default function ActivityModule({
                 : `Start by adding your first ${itemLabel.toLowerCase()}.`}
             </p>
             {!search && statusFilter === "All" && (
-              <button type="button" className={styles.primaryButton} onClick={openForm}>
-                Add your first {itemLabel}
-              </button>
+              formHref
+                ? <Link className={styles.primaryButton} href={formHref} prefetch={false}>Add your first {itemLabel}</Link>
+                : <button type="button" className={styles.primaryButton} onClick={openForm}>Add your first {itemLabel}</button>
             )}
           </section>
         )}

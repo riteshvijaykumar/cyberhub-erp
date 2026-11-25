@@ -10,4 +10,5 @@ dist/
 
 postgres-data/
 redis-data/
+achievement-uploads/
 *.log

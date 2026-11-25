@@ -8,7 +8,7 @@ import Header from "@/components/Header/Header";
 const modules = [
   { title: "Projects", href: "/projects", description: "Projects, funding, and submissions", color: "#e8f7fb" },
   { title: "Competitions", href: "/competitions", description: "Competitions and results", color: "#fff5df" },
-  { title: "Certifications", href: "/certificates", description: "Certificates and credentials", color: "#edf8ef" },
+  { title: "Courses and Certificates", href: "/certificates", description: "Completed courses and certifications", color: "#edf8ef" },
   { title: "Internships", href: "/internships", description: "Industry experience and training", color: "#f2edff" },
   { title: "Research", href: "/research", description: "Research work and publications", color: "#eaf0ff" },
   { title: "Workshops", href: "/workshops", description: "Workshops and technical learning", color: "#fff0f2" },

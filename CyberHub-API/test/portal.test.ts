@@ -11,10 +11,46 @@ const { app } = await import("../src/server.js");
 after(() => app.close());
 
 const demoPassword = "password123";
+let nextLoginAddress = 2;
+const competitionValues = {
+  activity: "Threat intelligence platform", level: "National", competitionType: "Hackathon",
+  organiser: "QA Institute", participation: "Team", dates: "12–14 Aug 2024",
+  venue: "Online", position: "Finalist", prizeMoney: "50000", currency: "INR", recognition: "Special mention",
+};
+const internshipValues = {
+  company: "QA Studio", workMode: "Hybrid", location: "Chennai, India", internshipType: "Part-time",
+  startDate: "2026-11-01", compensation: "Unpaid", details: "Worked on application accessibility.",
+};
+const projectValues = {
+  fundingAgency: "QA Funding Board", amount: "150000.50", currency: "INR",
+  projectType: "Innovation", projectStatus: "Active", details: "Build a research dashboard.",
+};
+const publicationValues = {
+  level: "International", publicationType: "Journal", venue: "QA Academic Review",
+  publicationDate: "2026-11-25", indexedBy: "Scopus, Web of Science", publicationLink: "https://doi.org/10.1000/example",
+};
+const patentValues = {
+  patentOffice: "India (IPO)", patentStatus: "Under Examination", filingDate: "2026-11-25",
+  applicationNo: "QA-123", inventors: "Student One, Student Two", details: "A reference abstract.",
+};
+const awardValues = {
+  details: "Recognised for academic performance and volunteering.",
+  level: "Institutional", issuer: "QA University", ceremonyDate: "2026-11-25", recognition: "Cash prize",
+};
+const submissionValues: Partial<Record<AchievementType, Record<string, string>>> = {
+  COMPETITION: competitionValues,
+  CERTIFICATE: { issuer: "QA Institute" },
+  INTERNSHIP: internshipValues,
+  PROJECT: projectValues,
+  PUBLICATION: publicationValues,
+  PATENT: patentValues,
+  AWARD: awardValues,
+};
 
 async function login(identifier: string, remember = true) {
   const response = await app.inject({
     method: "POST", url: "/api/v1/auth/login",
+    remoteAddress: `127.0.0.${nextLoginAddress++}`,
     payload: { identifier, password: demoPassword, remember },
   });
   assert.equal(response.statusCode, 200);
@@ -55,17 +91,20 @@ test("supports all achievement types and scopes reads, edits and review actions"
   assert.equal((await app.inject({ method: "POST", url: listUrl, headers: student, payload: { ...payload, title: "" } })).statusCode, 400);
 
   for (const type of Object.values(AchievementType)) {
-    const created = await app.inject({ method: "POST", url: listUrl, headers: student, payload: { ...payload, type } });
+    const submission = { ...payload, type, values: submissionValues[type] };
+    const created = await app.inject({ method: "POST", url: listUrl, headers: student, payload: submission });
     assert.equal(created.statusCode, 201, type);
     const record = created.json().data;
     const url = `${listUrl}/${record.id}`;
-    assert.equal((await app.inject({ method: "PATCH", url, headers: otherStudent, payload })).statusCode, 404);
+    assert.equal((await app.inject({ method: "PATCH", url, headers: otherStudent, payload: submission })).statusCode, 404);
     assert.equal((await app.inject({ method: "PATCH", url: `${url}/review`, headers: student, payload: { action: "APPROVED" } })).statusCode, 403);
-    const updated = await app.inject({ method: "PATCH", url, headers: student, payload: { ...payload, type, title: "Updated portal QA submission" } });
+    const updated = await app.inject({ method: "PATCH", url, headers: student, payload: { ...submission, title: "Updated portal QA submission" } });
     assert.equal(updated.json().data.title, "Updated portal QA submission");
     if (type === "PROJECT") {
       const queue = await app.inject({ url: listUrl, headers: faculty });
       assert.ok(queue.json().data.some((item: { id: string }) => item.id === record.id));
+      assert.equal(updated.json().data.metadata.projectStatus, "Active");
+      assert.equal(updated.json().data.status, "SUBMITTED");
       const noReason = await app.inject({ method: "PATCH", url: `${url}/review`, headers: faculty, payload: { action: "REJECTED" } });
       assert.equal(noReason.statusCode, 400);
       const decision = await app.inject({ method: "PATCH", url: `${url}/review`, headers: faculty, payload: { action: "REJECTED", comment: "Please check the submitted details." } });
@@ -87,6 +126,197 @@ test("supports all achievement types and scopes reads, edits and review actions"
   assert.equal((await app.inject({ method: "PATCH", url: `${listUrl}/${draftId}/review`, headers: faculty, payload: { action: "APPROVED" } })).statusCode, 404);
   const summary = await app.inject({ url: "/api/v1/student/summary", headers: student });
   assert.ok(summary.json().data.counts.rejected >= 1);
+});
+
+test("validates project funding and accepts an unfunded project", async () => {
+  const student = await login("student");
+  const url = "/api/v1/achievements";
+  const post = (values: object) => app.inject({
+    method: "POST", url, headers: student, payload: { type: "PROJECT", title: "QA project", values },
+  });
+  for (const invalid of [
+    { fundingAgency: " " }, { amount: "-100" }, { amount: "10.125" }, { currency: "12A" }, { projectStatus: "APPROVED" },
+  ]) {
+    assert.equal((await post({ ...projectValues, ...invalid })).statusCode, 400);
+  }
+  const unfunded = await post({ fundingAgency: "None", amount: "0", currency: "INR" });
+  assert.equal(unfunded.statusCode, 201);
+  assert.equal(unfunded.json().data.metadata.amount, "0");
+});
+
+test("validates publication metadata and permits one protected evidence file", async () => {
+  const student = await login("student");
+  const faculty = await login("faculty");
+  const other = await login("uat-student");
+  const url = "/api/v1/achievements";
+  const payload = { type: "PUBLICATION", title: "QA paper", values: publicationValues };
+  const bytes = Buffer.from("%PDF-1.4\n%%EOF");
+  const file = { fileName: "proof.pdf", mimeType: "application/pdf", content: bytes.toString("base64") };
+  const post = (submission: object) => app.inject({ method: "POST", url, headers: student, payload: submission });
+  for (const changes of [
+    { venue: " " }, { publicationDate: "2026-02-30" }, { indexedBy: "Scopus, Scopus" }, { publicationLink: "javascript:alert(1)" },
+  ]) {
+    assert.equal((await post({ ...payload, values: { ...publicationValues, ...changes } })).statusCode, 400);
+  }
+  assert.equal((await post({ ...payload, evidence: [file, file] })).statusCode, 400);
+  const created = await post({ ...payload, evidence: [file] });
+  assert.equal(created.statusCode, 201);
+  const record = created.json().data;
+  assert.deepEqual(record.metadata, publicationValues);
+  const downloadUrl = `${url}/${record.id}/documents/${record.documents[0].id}`;
+  assert.equal((await app.inject({ url: downloadUrl, headers: other })).statusCode, 404);
+  const download = await app.inject({ url: downloadUrl, headers: faculty });
+  assert.equal(download.statusCode, 200);
+  assert.deepEqual(download.rawPayload, bytes);
+});
+
+test("validates patent filing details and keeps patent status separate from review", async () => {
+  const student = await login("student");
+  const faculty = await login("faculty");
+  const other = await login("uat-student");
+  const url = "/api/v1/achievements";
+  const payload = { type: "PATENT", title: "QA patent", values: patentValues };
+  const bytes = Buffer.from("%PDF-1.4\n%%EOF");
+  const file = { fileName: "patent-document.pdf", mimeType: "application/pdf", content: bytes.toString("base64") };
+  const post = (submission: object) => app.inject({ method: "POST", url, headers: student, payload: submission });
+  for (const changes of [{ patentOffice: " " }, { filingDate: "2026-02-30" }, { patentStatus: "APPROVED" }]) {
+    assert.equal((await post({ ...payload, values: { ...patentValues, ...changes } })).statusCode, 400);
+  }
+  assert.equal((await post({ ...payload, evidence: [file, file] })).statusCode, 400);
+  const created = await post({ ...payload, evidence: [file] });
+  assert.equal(created.statusCode, 201);
+  const record = created.json().data;
+  assert.deepEqual(record.metadata, patentValues);
+  const reviewed = await app.inject({
+    method: "PATCH", url: `${url}/${record.id}/review`, headers: faculty, payload: { action: "APPROVED" },
+  });
+  assert.equal(reviewed.statusCode, 200);
+  assert.equal(reviewed.json().data.status, "APPROVED");
+  assert.equal(reviewed.json().data.metadata.patentStatus, "Under Examination");
+  const downloadUrl = `${url}/${record.id}/documents/${record.documents[0].id}`;
+  assert.equal((await app.inject({ url: downloadUrl, headers: other })).statusCode, 404);
+  const download = await app.inject({ url: downloadUrl, headers: faculty });
+  assert.equal(download.statusCode, 200);
+  assert.deepEqual(download.rawPayload, bytes);
+});
+
+test("validates awards and permits one protected certificate or photo", async () => {
+  const student = await login("student");
+  const faculty = await login("faculty");
+  const other = await login("uat-student");
+  const url = "/api/v1/achievements";
+  const payload = { type: "AWARD", title: "QA award", values: awardValues };
+  const bytes = Buffer.from("%PDF-1.4\n%%EOF");
+  const file = { fileName: "award-certificate.pdf", mimeType: "application/pdf", content: bytes.toString("base64") };
+  const post = (submission: object) => app.inject({ method: "POST", url, headers: student, payload: submission });
+  for (const changes of [{ details: " " }, { issuer: "" }, { ceremonyDate: "2026-02-30" }, { level: "APPROVED" }]) {
+    assert.equal((await post({ ...payload, values: { ...awardValues, ...changes } })).statusCode, 400);
+  }
+  assert.equal((await post({ ...payload, evidence: [file, file] })).statusCode, 400);
+  const created = await post({ ...payload, evidence: [file] });
+  assert.equal(created.statusCode, 201);
+  const award = created.json().data;
+  assert.deepEqual(award.metadata, awardValues);
+  const downloadUrl = `${url}/${award.id}/documents/${award.documents[0].id}`;
+  assert.equal((await app.inject({ url: downloadUrl, headers: other })).statusCode, 404);
+  const download = await app.inject({ url: downloadUrl, headers: faculty });
+  assert.equal(download.statusCode, 200);
+  assert.deepEqual(download.rawPayload, bytes);
+});
+
+test("requires competition details and protects uploaded evidence", async () => {
+  const student = await login("student");
+  const other = await login("uat-student");
+  const faculty = await login("faculty");
+  const url = "/api/v1/achievements";
+  const bytes = Buffer.from("%PDF-1.4\n%%EOF");
+  const certificate = { fileName: "Competition certificate.pdf", mimeType: "application/pdf", content: bytes.toString("base64") };
+  const payload = { type: "COMPETITION", title: "QA competition", values: competitionValues };
+  const post = (submission: object) => app.inject({ method: "POST", url, headers: student, payload: submission });
+  assert.equal((await post({ ...payload, values: { ...competitionValues, venue: " " } })).statusCode, 400);
+  assert.equal((await post({ ...payload, evidence: [{ ...certificate, mimeType: "image/png" }] })).statusCode, 400);
+  const created = await post({ ...payload, evidence: [certificate] });
+  assert.equal(created.statusCode, 201);
+  const record = created.json().data;
+  assert.deepEqual(record.metadata, competitionValues);
+  const downloadUrl = `${url}/${record.id}/documents/${record.documents[0].id}`;
+  assert.equal((await app.inject(downloadUrl)).statusCode, 401);
+  assert.equal((await app.inject({ url: downloadUrl, headers: other })).statusCode, 404);
+  for (const headers of [student, faculty]) {
+    const file = await app.inject({ url: downloadUrl, headers });
+    assert.equal(file.statusCode, 200);
+    assert.match(String(file.headers["content-disposition"]), /^attachment;/);
+    assert.deepEqual(file.rawPayload, bytes);
+  }
+  const tooMany = await app.inject({
+    method: "PATCH", url: `${url}/${record.id}`, headers: student, payload: { ...payload, evidence: [certificate, certificate] },
+  });
+  assert.equal(tooMany.statusCode, 400);
+  const edited = await app.inject({ method: "PATCH", url: `${url}/${record.id}`, headers: student, payload: { ...payload, evidence: [certificate] } });
+  assert.equal(edited.statusCode, 200);
+  assert.equal(edited.json().data.documents.length, 2);
+});
+
+test("collects credential details and permits one evidence attachment", async () => {
+  const student = await login("student");
+  const faculty = await login("faculty");
+  const url = "/api/v1/achievements";
+  const values = {
+    issuer: "QA Institute", certifyingBody: "QA Certification Board", duration: "40 hours",
+    dateEarned: "2026-11-25", credentialId: "QA-01", notes: "Completed with distinction",
+  };
+  const payload = { type: "CERTIFICATE", title: "QA Security Course", values };
+  const bytes = Buffer.from("%PDF-1.4\n%%EOF");
+  const attachment = { fileName: "credential.pdf", mimeType: "application/pdf", content: bytes.toString("base64") };
+  const post = (submission: object) => app.inject({ method: "POST", url, headers: student, payload: submission });
+  assert.equal((await post({ ...payload, values: { ...values, issuer: " " } })).statusCode, 400);
+  assert.equal((await post({ ...payload, values: { ...values, dateEarned: "2026-02-30" } })).statusCode, 400);
+  assert.equal((await post({ ...payload, evidence: [attachment, attachment] })).statusCode, 400);
+  const created = await post({ ...payload, evidence: [attachment] });
+  assert.equal(created.statusCode, 201);
+  const record = created.json().data;
+  assert.deepEqual(record.metadata, values);
+  const download = await app.inject({ url: `${url}/${record.id}/documents/${record.documents[0].id}`, headers: faculty });
+  assert.equal(download.statusCode, 200);
+  assert.deepEqual(download.rawPayload, bytes);
+  const editUrl = `${url}/${record.id}`;
+  const edited = await app.inject({ method: "PATCH", url: editUrl, headers: student, payload: { ...payload, values: { ...values, duration: "42 hours" } } });
+  assert.equal(edited.statusCode, 200);
+  assert.equal(edited.json().data.documents.length, 1);
+  const extraFile = await app.inject({ method: "PATCH", url: editUrl, headers: student, payload: { ...payload, evidence: [attachment] } });
+  assert.equal(extraFile.statusCode, 400);
+});
+
+test("records internship dates and keeps each evidence slot separate", async () => {
+  const student = await login("student");
+  const faculty = await login("faculty");
+  const other = await login("uat-student");
+  const url = "/api/v1/achievements";
+  const payload = { type: "INTERNSHIP", title: "QA internship", values: internshipValues };
+  const bytes = Buffer.from("%PDF-1.4\n%%EOF");
+  const file = { fileName: "evidence.pdf", mimeType: "application/pdf", content: bytes.toString("base64") };
+  const offer = { ...file, kind: "offer-letter" };
+  const completion = { ...file, kind: "completion-certificate" };
+  const post = (submission: object) => app.inject({ method: "POST", url, headers: student, payload: submission });
+
+  assert.equal((await post({ ...payload, values: { ...internshipValues, endDate: "2026-10-31" } })).statusCode, 400);
+  assert.equal((await post({ ...payload, evidence: [offer, offer] })).statusCode, 400);
+  const created = await post({ ...payload, evidence: [offer] });
+  assert.equal(created.statusCode, 201);
+  const internship = created.json().data;
+  assert.deepEqual(internship.metadata, internshipValues);
+  const edit = (submission: object) => app.inject({ method: "PATCH", url: `${url}/${internship.id}`, headers: student, payload: submission });
+  assert.equal((await edit({ ...payload, evidence: [offer] })).statusCode, 400);
+  const edited = await edit({ ...payload, evidence: [completion] });
+  assert.equal(edited.statusCode, 200);
+  const docIds = edited.json().data.documents.map(({ id }: { id: string }) => id);
+  assert.ok(docIds.some((id: string) => id.startsWith("offer-letter-")));
+  assert.ok(docIds.some((id: string) => id.startsWith("completion-certificate-")));
+  const downloadUrl = `${url}/${internship.id}/documents/${docIds[1]}`;
+  assert.equal((await app.inject({ url: downloadUrl, headers: other })).statusCode, 404);
+  const download = await app.inject({ url: downloadUrl, headers: faculty });
+  assert.equal(download.statusCode, 200);
+  assert.deepEqual(download.rawPayload, bytes);
 });
 
 test("edits only the signed-in profile and exposes no password hash", async () => {

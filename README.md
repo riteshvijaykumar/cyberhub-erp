@@ -145,7 +145,17 @@ each portal's server-side session check.
 | Dashboard | `GET /api/v1/student/summary` |
 | Staff records | `GET /api/v1/staff/students`, `GET /api/v1/staff/events`, `POST /api/v1/staff/events` |
 
-Student evidence upload/download, faculty event approval, password recovery,
+Competition submissions support up to two attachments. Courses, certificates,
+publications, patents, and awards support one, and internships support one offer letter and one
+completion certificate. PDF, PNG, and JPG files of up to
+5 MB each are accepted. The submitting student and authorized reviewers can
+download them. PostgreSQL-backed deployments store the files in
+`ACHIEVEMENT_UPLOAD_DIR` (default `achievement-uploads` relative to the API)
+and should preserve that directory alongside the database. Docker Compose
+mounts a named volume for it. Demo uploads last for the lifetime of the
+API process.
+
+Evidence uploads for other student modules, faculty event approval, password recovery,
 email notifications, and academic administration modules such as attendance,
 subjects, timetable, assignments, marks, and reports are outside the current
 implemented workflows. The achievement schema can display stored document

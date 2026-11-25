@@ -1,5 +1,7 @@
-import { redirect } from "next/navigation";
+import CompetitionForm from "./CompetitionForm";
 
-export default function NewCompetitionPage() {
-  redirect("/competitions");
+export default async function NewCompetitionPage({ searchParams }: { searchParams: Promise<{ edit?: string | string[] }> }) {
+  const { edit } = await searchParams;
+  const editingId = typeof edit === "string" ? edit : undefined;
+  return <CompetitionForm key={editingId ?? "new"} editingId={editingId} />;
 }

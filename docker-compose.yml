@@ -41,12 +41,16 @@ services:
       SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME:-cyberhub_session}
       SESSION_TTL_DAYS: ${SESSION_TTL_DAYS:-7}
       NODE_ENV: ${NODE_ENV:-development}
+      ACHIEVEMENT_UPLOAD_DIR: /app/achievement-uploads
     ports:
       - "${API_PORT:-4000}:4000"
     depends_on:
       postgres:
         condition: service_healthy
+    volumes:
+      - achievement-uploads:/app/achievement-uploads
 
 volumes:
   postgres-data:
   redis-data:
+  achievement-uploads:

@@ -192,6 +192,7 @@
 .fileName { overflow-wrap: anywhere; }
 .fileSize { color: var(--text-secondary); white-space: nowrap; font-size: 0.75rem; font-weight: 500; }
 .file .profileInfo { margin: 0; padding: 0.75rem; border-top: 1px solid var(--border); }
+.documentLink { display: inline-block; margin: 0 0.75rem 0.75rem; font-size: 0.825rem; overflow-wrap: anywhere; }
 
 @media (max-width: 850px) {
   .profileGrid { grid-template-columns: minmax(0, 1fr); }
